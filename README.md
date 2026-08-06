@@ -4,14 +4,22 @@ Application source and container image for Strategy Builder.
 
 Olares packaging (Helm chart / `OlaresManifest.yaml`) lives in the separate `terminus-apps/strategybuilder` chart and only references the published image — do not embed source into the chart.
 
-**Suggested image:** `ghcr.io/leolianger/strategybuilder:<tag>`
+**Published image:** `docker.io/<DOCKERHUB_USERNAME>/strategybuilder:<tag>`  
+(default assumed username `leolianger` → `docker.io/leolianger/strategybuilder`)
+
+Image tags come from:
+- `VERSION` file on every build (e.g. `1.2.20`) — this is what the Olares chart uses
+- `latest` on pushes to `main`
+- Git tags `v*` (semver), e.g. `git tag v1.2.20 && git push origin v1.2.20`
+
+CI builds a **multi-arch** image (`linux/amd64` + `linux/arm64`) via `.github/workflows/docker-publish.yml`, using secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
 
 ```bash
-docker build -t ghcr.io/leolianger/strategybuilder:1.2.20 .
-docker push ghcr.io/leolianger/strategybuilder:1.2.20
+docker build -t docker.io/leolianger/strategybuilder:1.2.20 .
+docker push docker.io/leolianger/strategybuilder:1.2.20
 ```
 
-Wire a GitHub Actions workflow to build/push on source changes; keep the chart `values.yaml` image tag in sync when releasing.
+Keep the Olares chart `values.yaml` `image.tag` in sync with `VERSION` when releasing.
 
 ---
 

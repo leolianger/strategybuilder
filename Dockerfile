@@ -1,6 +1,6 @@
 # Strategy Builder application image.
 # Build:
-#   docker build -t ghcr.io/leolianger/strategybuilder:1.2.20 .
+#   docker build -t docker.io/<DOCKERHUB_USERNAME>/strategybuilder:1.2.20 .
 FROM python:3.11-slim
 
 WORKDIR /app
