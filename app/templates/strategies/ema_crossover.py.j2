@@ -1,0 +1,25 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ fast_window }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ slow_window }})
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cross_up = (dataframe["ema_fast"] > dataframe["ema_slow"]) & (dataframe["ema_fast"].shift(1) <= dataframe["ema_slow"].shift(1))
+        dataframe.loc[cross_up & dataframe["ema_slow"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cross_down = (dataframe["ema_fast"] < dataframe["ema_slow"]) & (dataframe["ema_fast"].shift(1) >= dataframe["ema_slow"].shift(1))
+        dataframe.loc[cross_down & dataframe["ema_slow"].notna(), "exit_long"] = 1
+        return dataframe

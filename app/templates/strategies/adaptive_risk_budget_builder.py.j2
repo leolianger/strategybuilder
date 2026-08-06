@@ -1,0 +1,47 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["macro_ema"] = ta.EMA(dataframe, timeperiod={{ macro_ema }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        trend_ok = (dataframe["ema_fast"] > dataframe["ema_slow"]) & (dataframe["close"] > dataframe["macro_ema"])
+        momentum_ok = (dataframe["rsi"] >= {{ rsi_min }}) & (dataframe["rsi"] <= {{ rsi_max }})
+        strength_ok = dataframe["adx"] >= {{ adx_min }}
+        volume_ok = dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}
+        volatility_ok = dataframe["atr_pct"] <= {{ max_entry_atr_pct }}
+{% if risk_budget_profile == "defensive" %}
+        entry_condition = trend_ok & momentum_ok & strength_ok & volume_ok & volatility_ok
+{% elif risk_budget_profile == "growth" %}
+        entry_condition = trend_ok & momentum_ok & (strength_ok | volume_ok) & volatility_ok
+{% else %}
+        entry_condition = trend_ok & momentum_ok & (strength_ok | volume_ok) & volatility_ok
+{% endif %}
+        dataframe.loc[entry_condition & dataframe["macro_ema"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+{% if risk_budget_profile == "defensive" %}
+        exit_condition = (dataframe["ema_fast"] < dataframe["ema_slow"]) | (dataframe["rsi"] <= {{ defensive_exit_rsi }}) | (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+{% elif risk_budget_profile == "growth" %}
+        exit_condition = (dataframe["close"] < dataframe["ema_slow"]) | (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+{% else %}
+        exit_condition = (dataframe["ema_fast"] < dataframe["ema_slow"]) | (dataframe["rsi"] <= {{ balanced_exit_rsi }}) | (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+{% endif %}
+        dataframe.loc[exit_condition & dataframe["macro_ema"].notna(), "exit_long"] = 1
+        return dataframe

@@ -1,0 +1,35 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["entry_high"] = dataframe["high"].rolling({{ entry_window }}).max().shift(1)
+        dataframe["exit_low"] = dataframe["low"].rolling({{ exit_window }}).min().shift(1)
+{% if use_volume_filter %}
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+{% endif %}
+{% if trend_filter != "off" %}
+        dataframe["trend_filter"] = ta.{{ trend_filter }}(dataframe, timeperiod={{ trend_filter_window }})
+{% endif %}
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cond = dataframe["close"] > dataframe["entry_high"] * (1 + {{ breakout_buffer_pct }} / 100.0)
+{% if use_volume_filter %}
+        cond = cond & (dataframe["volume"] > dataframe["volume_ma"])
+{% endif %}
+{% if trend_filter != "off" %}
+        cond = cond & (dataframe["close"] > dataframe["trend_filter"])
+{% endif %}
+        dataframe.loc[cond & dataframe["entry_high"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe.loc[(dataframe["close"] < dataframe["exit_low"]) & dataframe["exit_low"].notna(), "exit_long"] = 1
+        return dataframe

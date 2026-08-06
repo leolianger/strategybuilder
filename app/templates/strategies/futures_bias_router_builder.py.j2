@@ -1,0 +1,44 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+    can_short = True
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["macro_ema"] = ta.EMA(dataframe, timeperiod={{ macro_ema }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        long_bias = (dataframe["ema_fast"] > dataframe["ema_slow"]) & (dataframe["close"] > dataframe["macro_ema"])
+        short_bias = (dataframe["ema_fast"] < dataframe["ema_slow"]) & (dataframe["close"] < dataframe["macro_ema"])
+        quality_ok = (dataframe["adx"] >= {{ adx_min }}) & (dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}) & (dataframe["atr_pct"] <= {{ max_entry_atr_pct }})
+        long_condition = long_bias & (dataframe["rsi"] >= {{ long_rsi_min }}) & (dataframe["rsi"] <= {{ long_rsi_max }}) & quality_ok
+        short_condition = short_bias & (dataframe["rsi"] >= {{ short_rsi_min }}) & (dataframe["rsi"] <= {{ short_rsi_max }}) & quality_ok
+{% if trade_direction == "long_only" %}
+        dataframe.loc[long_condition & dataframe["macro_ema"].notna(), "enter_long"] = 1
+{% elif trade_direction == "short_only" %}
+        dataframe.loc[short_condition & dataframe["macro_ema"].notna(), "enter_short"] = 1
+{% else %}
+        dataframe.loc[long_condition & dataframe["macro_ema"].notna(), "enter_long"] = 1
+        dataframe.loc[short_condition & dataframe["macro_ema"].notna(), "enter_short"] = 1
+{% endif %}
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        long_exit = (dataframe["ema_fast"] < dataframe["ema_slow"]) | (dataframe["rsi"] <= {{ long_exit_rsi }}) | (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        short_exit = (dataframe["ema_fast"] > dataframe["ema_slow"]) | (dataframe["rsi"] >= {{ short_exit_rsi }}) | (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        dataframe.loc[long_exit & dataframe["macro_ema"].notna(), "exit_long"] = 1
+        dataframe.loc[short_exit & dataframe["macro_ema"].notna(), "exit_short"] = 1
+        return dataframe

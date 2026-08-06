@@ -1,0 +1,45 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+{% if indicator == "RSI" %}
+        dataframe["signal"] = ta.RSI(dataframe, timeperiod={{ indicator_period }})
+{% elif indicator == "CCI" %}
+        dataframe["signal"] = ta.CCI(dataframe, timeperiod={{ indicator_period }})
+{% elif indicator == "MFI" %}
+        dataframe["signal"] = ta.MFI(dataframe, timeperiod={{ indicator_period }})
+{% else %}
+        dataframe["signal"] = ta.WILLR(dataframe, timeperiod={{ indicator_period }})
+{% endif %}
+{% if trend_filter != "off" %}
+        dataframe["trend_filter"] = ta.{{ trend_filter }}(dataframe, timeperiod={{ trend_filter_window }})
+{% endif %}
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+{% if direction == "below_entry_above_exit" %}
+        cond = dataframe["signal"] < {{ entry_threshold }}
+{% else %}
+        cond = dataframe["signal"] > {{ entry_threshold }}
+{% endif %}
+{% if trend_filter != "off" %}
+        cond = cond & (dataframe["close"] > dataframe["trend_filter"])
+{% endif %}
+        dataframe.loc[cond & dataframe["signal"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+{% if direction == "below_entry_above_exit" %}
+        cond = dataframe["signal"] > {{ exit_threshold }}
+{% else %}
+        cond = dataframe["signal"] < {{ exit_threshold }}
+{% endif %}
+        dataframe.loc[cond & dataframe["signal"].notna(), "exit_long"] = 1
+        return dataframe

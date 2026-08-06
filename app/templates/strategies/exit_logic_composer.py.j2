@@ -1,0 +1,63 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["trailing_ema"] = ta.EMA(dataframe, timeperiod={{ trailing_ema_window }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        macd = ta.MACD(dataframe)
+        dataframe["macd"] = macd["macd"]
+        dataframe["macdsignal"] = macd["macdsignal"]
+        dataframe["channel_high"] = dataframe["high"].rolling({{ channel_window }}).max().shift(1)
+        dataframe["channel_low"] = dataframe["low"].rolling({{ exit_window }}).min().shift(1)
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+{% if entry_signal == "ema_trend" %}
+        entry_condition = dataframe["ema_fast"] > dataframe["ema_slow"]
+{% elif entry_signal == "rsi_reversion" %}
+        entry_condition = dataframe["rsi"] < {{ rsi_entry }}
+{% else %}
+        entry_condition = dataframe["close"] > dataframe["channel_high"]
+{% endif %}
+        dataframe.loc[entry_condition, "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        opposite_signal = dataframe["ema_fast"] < dataframe["ema_slow"]
+        rsi_decay = dataframe["rsi"] < {{ rsi_exit_floor }}
+        rsi_reversion_exit = dataframe["rsi"] > {{ rsi_exit_ceiling }}
+        ema_trailing_exit = dataframe["close"] < dataframe["trailing_ema"]
+        atr_band_exit = dataframe["close"] < (dataframe["ema_slow"] - dataframe["atr"] * {{ atr_mult }})
+        channel_exit = dataframe["close"] < dataframe["channel_low"]
+        volatility_cutoff = dataframe["atr_pct"] > {{ hard_atr_pct }}
+        momentum_deterioration = (dataframe["macd"] < dataframe["macdsignal"]) | (dataframe["rsi"] < {{ momentum_floor }})
+{% if exit_method == "opposite_signal" %}
+        exit_condition = opposite_signal
+{% elif exit_method == "rsi_decay" %}
+        exit_condition = rsi_decay | rsi_reversion_exit
+{% elif exit_method == "ema_trailing" %}
+        exit_condition = ema_trailing_exit
+{% elif exit_method == "atr_band" %}
+        exit_condition = atr_band_exit
+{% elif exit_method == "channel_exit" %}
+        exit_condition = channel_exit
+{% elif exit_method == "volatility_cutoff" %}
+        exit_condition = volatility_cutoff
+{% elif exit_method == "momentum_deterioration" %}
+        exit_condition = momentum_deterioration
+{% else %}
+        exit_condition = opposite_signal | rsi_decay | ema_trailing_exit | atr_band_exit | channel_exit | volatility_cutoff | momentum_deterioration
+{% endif %}
+        dataframe.loc[exit_condition, "exit_long"] = 1
+        return dataframe

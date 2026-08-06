@@ -1,0 +1,27 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        stoch = ta.STOCHRSI(dataframe["close"], timeperiod={{ stoch_period }}, fastk_period={{ k_period }}, fastd_period={{ d_period }}, fastd_matype=0)
+        dataframe["stoch_k"] = stoch["fastk"]
+        dataframe["stoch_d"] = stoch["fastd"]
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cross_up = (dataframe["stoch_k"] > dataframe["stoch_d"]) & (dataframe["stoch_k"].shift(1) <= dataframe["stoch_d"].shift(1))
+        cond = cross_up & (dataframe["stoch_k"] < {{ buy_threshold }})
+        dataframe.loc[cond & dataframe["stoch_k"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe.loc[(dataframe["stoch_k"] > {{ sell_threshold }}) & dataframe["stoch_k"].notna(), "exit_long"] = 1
+        return dataframe

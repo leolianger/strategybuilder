@@ -1,0 +1,40 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["atr_ma"] = dataframe["atr_pct"].rolling({{ volatility_smoothing }}).mean()
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["distance_from_ema_pct"] = (dataframe["close"] - dataframe["ema_slow"]).abs() / dataframe["close"] * 100.0
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        base_signal = (dataframe["ema_fast"] > dataframe["ema_slow"]) & (dataframe["rsi"] >= {{ rsi_recovery_min }})
+        volatility_guard = (dataframe["atr_pct"] <= {{ max_atr_pct }}) & (dataframe["atr_pct"] <= dataframe["atr_ma"] * {{ atr_ma_multiplier }})
+        participation_guard = dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}
+        distance_guard = dataframe["distance_from_ema_pct"] <= {{ max_distance_from_ema_pct }}
+        strength_guard = dataframe["adx"] >= {{ adx_min }}
+        gate_count = volatility_guard.astype(int) + participation_guard.astype(int) + distance_guard.astype(int) + strength_guard.astype(int)
+        dataframe.loc[base_signal & (gate_count >= {{ min_guard_count }}) & dataframe["ema_slow"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        exit_condition = (
+            (dataframe["ema_fast"] < dataframe["ema_slow"]) |
+            (dataframe["atr_pct"] >= {{ hard_atr_pct }}) |
+            (dataframe["rsi"] <= {{ rsi_exit_floor }})
+        )
+        dataframe.loc[exit_condition & dataframe["ema_slow"].notna(), "exit_long"] = 1
+        return dataframe

@@ -1,0 +1,54 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["macro_ema"] = ta.EMA(dataframe, timeperiod={{ macro_ema }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["channel_high"] = dataframe["high"].rolling({{ channel_window }}).max().shift(1)
+        dataframe["channel_low"] = dataframe["low"].rolling({{ channel_window }}).min().shift(1)
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        trend_ok = (dataframe["ema_fast"] > dataframe["ema_slow"]) & (dataframe["close"] > dataframe["macro_ema"])
+        recovery_ok = dataframe["rsi"] >= {{ rsi_recovery_min }}
+        participation_ok = dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}
+        volatility_ok = dataframe["atr_pct"] <= {{ max_entry_atr_pct }}
+        breakout_ok = dataframe["close"] > dataframe["channel_high"]
+{% if scenario_mode == "stress_guard" %}
+        entry_condition = trend_ok & recovery_ok & participation_ok & volatility_ok & (dataframe["adx"] >= {{ adx_min }})
+{% elif scenario_mode == "breakout_guard" %}
+        entry_condition = breakout_ok & participation_ok & volatility_ok & (dataframe["adx"] >= {{ adx_min }})
+{% elif scenario_mode == "recovery_guard" %}
+        entry_condition = trend_ok & (dataframe["rsi"] <= {{ rsi_pullback_max }}) & recovery_ok & volatility_ok
+{% else %}
+        entry_condition = ((trend_ok & recovery_ok) | (breakout_ok & participation_ok)) & volatility_ok
+{% endif %}
+        dataframe.loc[entry_condition & dataframe["macro_ema"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        protective_exit = (dataframe["atr_pct"] >= {{ hard_atr_pct }}) | (dataframe["close"] < dataframe["channel_low"])
+        trend_exit = dataframe["ema_fast"] < dataframe["ema_slow"]
+        momentum_exit = dataframe["rsi"] <= {{ rsi_exit_floor }}
+{% if exit_style == "protective_first" %}
+        exit_condition = protective_exit | momentum_exit
+{% elif exit_style == "trend_first" %}
+        exit_condition = trend_exit | protective_exit
+{% else %}
+        exit_condition = protective_exit | trend_exit | momentum_exit
+{% endif %}
+        dataframe.loc[exit_condition & dataframe["macro_ema"].notna(), "exit_long"] = 1
+        return dataframe

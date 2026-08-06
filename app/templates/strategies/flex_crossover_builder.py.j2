@@ -1,0 +1,55 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        source = {{ source_expr }}
+        dataframe["entry_fast"] = ta.{{ entry_fast_ta }}(source, timeperiod={{ entry_fast_window }})
+        dataframe["entry_slow"] = ta.{{ entry_slow_ta }}(source, timeperiod={{ entry_slow_window }})
+        dataframe["exit_fast"] = ta.{{ exit_fast_ta }}(source, timeperiod={{ exit_fast_window }})
+        dataframe["exit_slow"] = ta.{{ exit_slow_ta }}(source, timeperiod={{ exit_slow_window }})
+{% if trend_filter_ta != "off" %}
+        dataframe["trend_filter"] = ta.{{ trend_filter_ta }}(source, timeperiod={{ trend_filter_window }})
+{% endif %}
+{% if use_rsi_filter %}
+        dataframe["rsi_filter"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+{% endif %}
+{% if use_volume_filter %}
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+{% endif %}
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+{% if entry_direction == "cross_above" %}
+        entry_cross = (dataframe["entry_fast"] > dataframe["entry_slow"]) & (dataframe["entry_fast"].shift(1) <= dataframe["entry_slow"].shift(1))
+{% else %}
+        entry_cross = (dataframe["entry_fast"] < dataframe["entry_slow"]) & (dataframe["entry_fast"].shift(1) >= dataframe["entry_slow"].shift(1))
+{% endif %}
+        cond = entry_cross
+{% if trend_filter_ta != "off" %}
+        cond = cond & (dataframe["close"] > dataframe["trend_filter"])
+{% endif %}
+{% if use_rsi_filter %}
+        cond = cond & (dataframe["rsi_filter"] < {{ rsi_entry_max }})
+{% endif %}
+{% if use_volume_filter %}
+        cond = cond & (dataframe["volume"] > dataframe["volume_ma"])
+{% endif %}
+        dataframe.loc[cond & dataframe["entry_slow"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+{% if exit_direction == "cross_above" %}
+        exit_cross = (dataframe["exit_fast"] > dataframe["exit_slow"]) & (dataframe["exit_fast"].shift(1) <= dataframe["exit_slow"].shift(1))
+{% else %}
+        exit_cross = (dataframe["exit_fast"] < dataframe["exit_slow"]) & (dataframe["exit_fast"].shift(1) >= dataframe["exit_slow"].shift(1))
+{% endif %}
+        dataframe.loc[exit_cross & dataframe["exit_slow"].notna(), "exit_long"] = 1
+        return dataframe

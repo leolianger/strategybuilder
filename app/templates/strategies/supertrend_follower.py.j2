@@ -1,0 +1,51 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import numpy as np
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        atr = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        hl2 = (dataframe["high"] + dataframe["low"]) / 2.0
+        upper = hl2 + {{ atr_mult }} * atr
+        lower = hl2 - {{ atr_mult }} * atr
+
+        direction = np.ones(len(dataframe), dtype=int)
+        st = np.zeros(len(dataframe), dtype=float)
+
+        for i in range(len(dataframe)):
+            if i == 0:
+                st[i] = lower.iloc[i]
+                direction[i] = 1
+                continue
+
+            prev_st = st[i - 1]
+            prev_dir = direction[i - 1]
+            cur_upper = upper.iloc[i]
+            cur_lower = lower.iloc[i]
+            close = dataframe["close"].iloc[i]
+
+            if prev_dir == 1:
+                st[i] = max(cur_lower, prev_st)
+                direction[i] = -1 if close < st[i] else 1
+            else:
+                st[i] = min(cur_upper, prev_st)
+                direction[i] = 1 if close > st[i] else -1
+
+        dataframe["supertrend"] = st
+        dataframe["st_dir"] = direction
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe.loc[(dataframe["st_dir"] == 1) & (dataframe["st_dir"].shift(1) == -1), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe.loc[(dataframe["st_dir"] == -1) & (dataframe["st_dir"].shift(1) == 1), "exit_long"] = 1
+        return dataframe

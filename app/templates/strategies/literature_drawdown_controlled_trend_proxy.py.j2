@@ -1,0 +1,42 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["fast_ema"] = ta.EMA(dataframe, timeperiod={{ fast_ema }})
+        dataframe["slow_ema"] = ta.EMA(dataframe, timeperiod={{ slow_ema }})
+        dataframe["equity_proxy_high"] = dataframe["close"].rolling({{ drawdown_window }}).max()
+        dataframe["drawdown_pct"] = (dataframe["close"] / dataframe["equity_proxy_high"] - 1.0) * 100.0
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        entry = (
+            (dataframe["fast_ema"] > dataframe["slow_ema"]) &
+            (dataframe["close"] > dataframe["slow_ema"]) &
+            (dataframe["drawdown_pct"] >= -{{ max_entry_drawdown_pct }}) &
+            (dataframe["adx"] >= {{ adx_min }}) &
+            (dataframe["atr_pct"] <= {{ max_atr_pct }}) &
+            (dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }})
+        )
+        dataframe.loc[entry & dataframe["slow_ema"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        exit_condition = (
+            (dataframe["fast_ema"] < dataframe["slow_ema"]) |
+            (dataframe["drawdown_pct"] <= -{{ hard_drawdown_pct }}) |
+            (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        )
+        dataframe.loc[exit_condition & dataframe["slow_ema"].notna(), "exit_long"] = 1
+        return dataframe

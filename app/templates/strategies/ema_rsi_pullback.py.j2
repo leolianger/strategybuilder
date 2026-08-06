@@ -1,0 +1,38 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["trend_ema"] = ta.EMA(dataframe, timeperiod={{ trend_ema_window }})
+        dataframe["pullback_ema"] = ta.EMA(dataframe, timeperiod={{ pullback_ema_window }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        pullback_zone = dataframe["close"] <= dataframe["pullback_ema"] * (1 + {{ pullback_buffer_pct }} / 100.0)
+        trend_guard = dataframe["close"] > dataframe["trend_ema"]
+        rsi_recovery = (dataframe["rsi"] >= {{ rsi_entry_min }}) & (dataframe["rsi"] <= {{ rsi_entry_max }})
+{% if use_volume_confirmation %}
+        volume_confirm = dataframe["volume"] > dataframe["volume_ma"] * {{ volume_multiplier }}
+{% else %}
+        volume_confirm = dataframe["volume"] >= 0
+{% endif %}
+        dataframe.loc[
+            trend_guard & pullback_zone & rsi_recovery & volume_confirm,
+            "enter_long",
+        ] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        trend_break = dataframe["close"] < dataframe["trend_ema"]
+        momentum_decay = dataframe["rsi"] < {{ rsi_exit_min }}
+        stretch_exit = dataframe["rsi"] > {{ rsi_exit_high }}
+        dataframe.loc[trend_break | momentum_decay | stretch_exit, "exit_long"] = 1
+        return dataframe

@@ -1,0 +1,43 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["level_ema"] = ta.EMA(dataframe, timeperiod={{ level_ema }})
+        dataframe["fast_change_pct"] = dataframe["close"].pct_change({{ fast_window }}) * 100.0
+        dataframe["ema_deviation_pct"] = (dataframe["close"] - dataframe["level_ema"]) / dataframe["close"] * 100.0
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["volume_component"] = 0.0
+        if {{ include_volume_component }}:
+            dataframe.loc[dataframe["volume"] > dataframe["volume_ma"], "volume_component"] = 0.25
+        dataframe["level_score"] = 0.0
+        dataframe.loc[dataframe["fast_change_pct"] > 0, "level_score"] += 0.35
+        dataframe.loc[dataframe["ema_deviation_pct"] > 0, "level_score"] += 0.40
+        dataframe["level_score"] += dataframe["volume_component"]
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        entry = (
+            (dataframe["level_score"] >= {{ min_level_score }}) &
+            (dataframe["close"] > dataframe["level_ema"]) &
+            (dataframe["atr_pct"] <= {{ max_atr_pct }})
+        )
+        dataframe.loc[entry & dataframe["level_ema"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        exit_condition = (
+            (dataframe["level_score"] <= {{ exit_level_score }}) |
+            (dataframe["close"] < dataframe["level_ema"])
+        )
+        dataframe.loc[exit_condition & dataframe["level_ema"].notna(), "exit_long"] = 1
+        return dataframe

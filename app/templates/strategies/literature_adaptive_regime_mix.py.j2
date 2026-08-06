@@ -1,0 +1,46 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["macro_ema"] = ta.EMA(dataframe, timeperiod={{ macro_ema }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["channel_high"] = dataframe["high"].rolling({{ breakout_window }}).max().shift(1)
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        trend_entry = (dataframe["close"] > dataframe["macro_ema"]) & (dataframe["ema_fast"] > dataframe["ema_slow"]) & (dataframe["adx"] >= {{ trend_adx_min }})
+        range_entry = (dataframe["adx"] <= {{ range_adx_max }}) & (dataframe["rsi"] <= {{ range_rsi_buy }})
+        breakout_entry = (dataframe["close"] > dataframe["channel_high"]) & (dataframe["atr_pct"] <= {{ breakout_atr_max }})
+{% if regime_mode == "trend_only" %}
+        entry = trend_entry
+{% elif regime_mode == "range_recovery" %}
+        entry = range_entry
+{% elif regime_mode == "breakout_only" %}
+        entry = breakout_entry
+{% else %}
+        entry = trend_entry | range_entry | breakout_entry
+{% endif %}
+        dataframe.loc[entry & dataframe["macro_ema"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        exit_condition = (
+            (dataframe["ema_fast"] < dataframe["ema_slow"]) |
+            (dataframe["rsi"] >= {{ range_rsi_sell }}) |
+            (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        )
+        dataframe.loc[exit_condition & dataframe["macro_ema"].notna(), "exit_long"] = 1
+        return dataframe

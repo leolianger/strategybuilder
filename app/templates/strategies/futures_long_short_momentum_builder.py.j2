@@ -1,0 +1,84 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{% if trade_direction == "long_only" %}
+    can_short = False
+{% else %}
+    can_short = True
+{% endif %}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["exit_ema"] = ta.EMA(dataframe, timeperiod={{ exit_ema }})
+        macd = ta.MACD(dataframe, fastperiod={{ macd_fast }}, slowperiod={{ macd_slow }}, signalperiod={{ macd_signal }})
+        dataframe["macd"] = macd["macd"]
+        dataframe["macdsignal"] = macd["macdsignal"]
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        volume_gate = dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}
+        volatility_gate = dataframe["atr_pct"] <= {{ max_atr_pct }}
+        strength_gate = dataframe["adx"] >= {{ adx_min }}
+
+{% if trade_direction in ["long_only", "long_short"] %}
+        long_trend = dataframe["ema_fast"] > dataframe["ema_slow"]
+        long_momentum = dataframe["macd"] > dataframe["macdsignal"]
+        long_rsi = (dataframe["rsi"] >= {{ long_rsi_min }}) & (dataframe["rsi"] <= {{ long_rsi_max }})
+        long_entry = long_trend & long_momentum & long_rsi & strength_gate & volume_gate & volatility_gate
+        dataframe.loc[long_entry & dataframe["ema_slow"].notna(), "enter_long"] = 1
+{% endif %}
+{% if trade_direction in ["short_only", "long_short"] %}
+        short_trend = dataframe["ema_fast"] < dataframe["ema_slow"]
+        short_momentum = dataframe["macd"] < dataframe["macdsignal"]
+        short_rsi = (dataframe["rsi"] >= {{ short_rsi_min }}) & (dataframe["rsi"] <= {{ short_rsi_max }})
+        short_entry = short_trend & short_momentum & short_rsi & strength_gate & volume_gate & volatility_gate
+        dataframe.loc[short_entry & dataframe["ema_slow"].notna(), "enter_short"] = 1
+{% endif %}
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        volatility_exit = dataframe["atr_pct"] > {{ hard_atr_pct }}
+{% if trade_direction in ["long_only", "long_short"] %}
+        long_opposite = dataframe["ema_fast"] < dataframe["ema_slow"]
+        long_trailing = dataframe["close"] < dataframe["exit_ema"]
+        long_momentum_decay = dataframe["macd"] < dataframe["macdsignal"]
+{% if exit_mode == "opposite_signal" %}
+        long_exit = long_opposite
+{% elif exit_mode == "ema_trailing" %}
+        long_exit = long_trailing
+{% elif exit_mode == "atr_or_signal" %}
+        long_exit = volatility_exit | long_opposite
+{% else %}
+        long_exit = long_opposite | long_trailing | long_momentum_decay | volatility_exit
+{% endif %}
+        dataframe.loc[long_exit & dataframe["ema_slow"].notna(), "exit_long"] = 1
+{% endif %}
+{% if trade_direction in ["short_only", "long_short"] %}
+        short_opposite = dataframe["ema_fast"] > dataframe["ema_slow"]
+        short_trailing = dataframe["close"] > dataframe["exit_ema"]
+        short_momentum_decay = dataframe["macd"] > dataframe["macdsignal"]
+{% if exit_mode == "opposite_signal" %}
+        short_exit = short_opposite
+{% elif exit_mode == "ema_trailing" %}
+        short_exit = short_trailing
+{% elif exit_mode == "atr_or_signal" %}
+        short_exit = volatility_exit | short_opposite
+{% else %}
+        short_exit = short_opposite | short_trailing | short_momentum_decay | volatility_exit
+{% endif %}
+        dataframe.loc[short_exit & dataframe["ema_slow"].notna(), "exit_short"] = 1
+{% endif %}
+        return dataframe

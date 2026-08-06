@@ -1,0 +1,21 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ultosc"] = ta.ULTOSC(dataframe, timeperiod1={{ period1 }}, timeperiod2={{ period2 }}, timeperiod3={{ period3 }})
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe.loc[(dataframe["ultosc"] < {{ buy_threshold }}) & dataframe["ultosc"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe.loc[(dataframe["ultosc"] > {{ sell_threshold }}) & dataframe["ultosc"].notna(), "exit_long"] = 1
+        return dataframe

@@ -1,0 +1,54 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["exit_ema"] = ta.EMA(dataframe, timeperiod={{ exit_ema }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["channel_high"] = dataframe["high"].rolling({{ breakout_window }}).max().shift(1)
+        return dataframe
+
+    def _component_score(self, dataframe: DataFrame):
+        score = 0
+{% if use_trend_component %}
+        score = score + ((dataframe["ema_fast"] > dataframe["ema_slow"]).astype(int) * {{ trend_weight }})
+{% endif %}
+{% if use_momentum_component %}
+        score = score + (((dataframe["rsi"] >= {{ rsi_min }}) & (dataframe["rsi"] <= {{ rsi_max }})).astype(int) * {{ momentum_weight }})
+{% endif %}
+{% if use_strength_component %}
+        score = score + ((dataframe["adx"] >= {{ adx_min }}).astype(int) * {{ strength_weight }})
+{% endif %}
+{% if use_volume_component %}
+        score = score + ((dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}).astype(int) * {{ volume_weight }})
+{% endif %}
+{% if use_volatility_component %}
+        score = score + ((dataframe["atr_pct"] <= {{ max_atr_pct }}).astype(int) * {{ volatility_weight }})
+{% endif %}
+{% if use_breakout_component %}
+        score = score + ((dataframe["close"] > dataframe["channel_high"]).astype(int) * {{ breakout_weight }})
+{% endif %}
+        return score
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        component_score = self._component_score(dataframe)
+        dataframe.loc[(component_score >= {{ min_component_score }}) & dataframe["ema_slow"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        component_score = self._component_score(dataframe)
+        exit_condition = (component_score <= {{ exit_score }}) | (dataframe["close"] < dataframe["exit_ema"])
+        dataframe.loc[exit_condition & dataframe["ema_slow"].notna(), "exit_long"] = 1
+        return dataframe

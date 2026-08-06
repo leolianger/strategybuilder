@@ -1,0 +1,25 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["trend_ma"] = ta.EMA(dataframe, timeperiod={{ ma_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cond = (dataframe["close"] > dataframe["trend_ma"]) & (dataframe["adx"] > {{ adx_threshold }})
+        dataframe.loc[cond & dataframe["trend_ma"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cond = (dataframe["close"] < dataframe["trend_ma"]) | (dataframe["adx"] < {{ adx_threshold }} * 0.8)
+        dataframe.loc[cond & dataframe["trend_ma"].notna(), "exit_long"] = 1
+        return dataframe

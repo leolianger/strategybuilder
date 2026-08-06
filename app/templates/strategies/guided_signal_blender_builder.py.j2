@@ -1,0 +1,78 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        macd = ta.MACD(dataframe, fastperiod={{ macd_fast }}, slowperiod={{ macd_slow }}, signalperiod={{ macd_signal }})
+        dataframe["macd"] = macd["macd"]
+        dataframe["macdsignal"] = macd["macdsignal"]
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["channel_high"] = dataframe["high"].rolling({{ breakout_window }}).max().shift(1)
+        dataframe["channel_low"] = dataframe["low"].rolling({{ exit_window }}).min().shift(1)
+        dataframe["exit_ema"] = ta.EMA(dataframe, timeperiod={{ exit_ema }})
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+{% if primary_signal == "macd_momentum" %}
+        primary_entry = dataframe["macd"] > dataframe["macdsignal"]
+{% elif primary_signal == "rsi_recovery" %}
+        primary_entry = (dataframe["rsi"] >= {{ rsi_recovery_min }}) & (dataframe["close"] > dataframe["ema_slow"])
+{% elif primary_signal == "channel_breakout" %}
+        primary_entry = dataframe["close"] > dataframe["channel_high"]
+{% else %}
+        primary_entry = dataframe["ema_fast"] > dataframe["ema_slow"]
+{% endif %}
+        trend_confirm = dataframe["ema_fast"] > dataframe["ema_slow"]
+        momentum_confirm = (dataframe["rsi"] >= {{ rsi_recovery_min }}) & (dataframe["rsi"] <= {{ rsi_overheat_max }})
+        macd_confirm = dataframe["macd"] > dataframe["macdsignal"]
+        strength_confirm = dataframe["adx"] >= {{ adx_min }}
+        volume_confirm = dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}
+        volatility_confirm = dataframe["atr_pct"] <= {{ max_atr_pct }}
+        confirmation_count = (
+            trend_confirm.astype(int) + momentum_confirm.astype(int) + macd_confirm.astype(int) +
+            strength_confirm.astype(int) + volume_confirm.astype(int) + volatility_confirm.astype(int)
+        )
+{% if confirmation_bundle == "light" %}
+        required_confirmations = 2
+{% elif confirmation_bundle == "strict" %}
+        required_confirmations = 5
+{% elif confirmation_bundle == "volatility_aware" %}
+        required_confirmations = 3
+        primary_entry = primary_entry & volatility_confirm
+{% else %}
+        required_confirmations = 3
+{% endif %}
+        entry_condition = primary_entry & (confirmation_count >= required_confirmations)
+        dataframe.loc[entry_condition & dataframe["ema_slow"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+{% if exit_bundle == "opposite_signal" %}
+        exit_condition = dataframe["ema_fast"] < dataframe["ema_slow"]
+{% elif exit_bundle == "trend_trailing" %}
+        exit_condition = dataframe["close"] < dataframe["exit_ema"]
+{% elif exit_bundle == "atr_protective" %}
+        exit_condition = (dataframe["close"] < dataframe["channel_low"]) | (dataframe["atr_pct"] > {{ hard_atr_pct }})
+{% else %}
+        exit_condition = (
+            (dataframe["ema_fast"] < dataframe["ema_slow"]) |
+            (dataframe["macd"] < dataframe["macdsignal"]) |
+            (dataframe["close"] < dataframe["exit_ema"]) |
+            (dataframe["close"] < dataframe["channel_low"]) |
+            (dataframe["atr_pct"] > {{ hard_atr_pct }})
+        )
+{% endif %}
+        dataframe.loc[exit_condition & dataframe["ema_slow"].notna(), "exit_long"] = 1
+        return dataframe

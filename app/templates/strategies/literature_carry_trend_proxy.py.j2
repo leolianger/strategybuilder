@@ -1,0 +1,47 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["momentum"] = ta.ROC(dataframe, timeperiod={{ momentum_window }})
+        if "funding_rate" in dataframe.columns:
+            dataframe["carry_proxy"] = dataframe["funding_rate"]
+        elif "basis_pct" in dataframe.columns:
+            dataframe["carry_proxy"] = dataframe["basis_pct"]
+        else:
+            dataframe["carry_proxy"] = 0.0
+        dataframe["carry_smooth"] = dataframe["carry_proxy"].rolling({{ carry_window }}).mean()
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        entry = (
+            (dataframe["ema_fast"] > dataframe["ema_slow"]) &
+            (dataframe["momentum"] > {{ min_momentum }}) &
+            (dataframe["carry_smooth"] >= {{ min_carry }}) &
+            (dataframe["adx"] >= {{ adx_min }}) &
+            (dataframe["atr_pct"] <= {{ max_atr_pct }})
+        )
+        dataframe.loc[entry & dataframe["ema_slow"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        exit_condition = (
+            (dataframe["ema_fast"] < dataframe["ema_slow"]) |
+            (dataframe["momentum"] < {{ exit_momentum }}) |
+            (dataframe["carry_smooth"] < {{ exit_carry }}) |
+            (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        )
+        dataframe.loc[exit_condition & dataframe["ema_slow"].notna(), "exit_long"] = 1
+        return dataframe

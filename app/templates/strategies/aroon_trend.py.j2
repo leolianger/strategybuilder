@@ -1,0 +1,31 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        aroon = ta.AROON(dataframe, timeperiod={{ aroon_period }})
+        dataframe["aroon_down"] = aroon["aroondown"]
+        dataframe["aroon_up"] = aroon["aroonup"]
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cond = (
+            (dataframe["aroon_up"] > {{ entry_threshold }}) &
+            (dataframe["aroon_up"] > dataframe["aroon_down"])
+        )
+        dataframe.loc[cond & dataframe["aroon_up"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cond = (
+            (dataframe["aroon_up"] < {{ exit_threshold }}) |
+            (dataframe["aroon_down"] > dataframe["aroon_up"])
+        )
+        dataframe.loc[cond & dataframe["aroon_up"].notna(), "exit_long"] = 1
+        return dataframe

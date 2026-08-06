@@ -1,0 +1,43 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["price_distance_pct"] = (dataframe["close"] - dataframe["ema_slow"]).abs() / dataframe["close"] * 100.0
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        positive_score = 0
+        positive_score = positive_score + ((dataframe["ema_fast"] > dataframe["ema_slow"]).astype(int) * {{ trend_weight }})
+        positive_score = positive_score + ((dataframe["rsi"] >= {{ rsi_recovery_min }}).astype(int) * {{ momentum_weight }})
+        positive_score = positive_score + ((dataframe["adx"] >= {{ adx_min }}).astype(int) * {{ strength_weight }})
+        positive_score = positive_score + ((dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}).astype(int) * {{ volume_weight }})
+        conflict_score = 0
+        conflict_score = conflict_score + ((dataframe["rsi"] >= {{ rsi_overheat_max }}).astype(int) * {{ overheat_penalty }})
+        conflict_score = conflict_score + ((dataframe["atr_pct"] >= {{ max_entry_atr_pct }}).astype(int) * {{ volatility_penalty }})
+        conflict_score = conflict_score + ((dataframe["price_distance_pct"] >= {{ max_distance_pct }}).astype(int) * {{ distance_penalty }})
+        net_score = positive_score - conflict_score
+        dataframe.loc[(net_score >= {{ min_net_score }}) & dataframe["ema_slow"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        exit_condition = (
+            (dataframe["ema_fast"] < dataframe["ema_slow"]) |
+            (dataframe["rsi"] <= {{ rsi_exit_floor }}) |
+            (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        )
+        dataframe.loc[exit_condition & dataframe["ema_slow"].notna(), "exit_long"] = 1
+        return dataframe

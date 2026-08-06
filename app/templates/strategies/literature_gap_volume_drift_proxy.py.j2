@@ -1,0 +1,39 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["gap_pct"] = (dataframe["open"] / dataframe["close"].shift(1) - 1.0) * 100.0
+        dataframe["intrabar_strength"] = (dataframe["close"] - dataframe["open"]) / dataframe["open"] * 100.0
+        dataframe["drift_ema"] = ta.EMA(dataframe, timeperiod={{ drift_ema }})
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        entry = (
+            (dataframe["gap_pct"] >= {{ min_gap_pct }}) &
+            (dataframe["intrabar_strength"] >= {{ min_intrabar_strength_pct }}) &
+            (dataframe["close"] > dataframe["drift_ema"]) &
+            (dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}) &
+            (dataframe["atr_pct"] <= {{ max_atr_pct }})
+        )
+        dataframe.loc[entry & dataframe["gap_pct"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        exit_condition = (
+            (dataframe["close"] < dataframe["drift_ema"]) |
+            (dataframe["intrabar_strength"] <= -{{ reversal_strength_pct }}) |
+            (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        )
+        dataframe.loc[exit_condition & dataframe["drift_ema"].notna(), "exit_long"] = 1
+        return dataframe

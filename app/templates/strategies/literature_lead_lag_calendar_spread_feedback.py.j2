@@ -1,0 +1,186 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import pandas as pd
+
+
+PAPER_LAMBDA_PRICE = {
+    "IC": 1.20,
+    "IF": 0.80,
+    "IH": 0.80,
+    "IM": 1.20,
+}
+
+
+class CFFEXTickSynchronizer:
+    """
+    Research helper for the Li-Chen-Liu (2025) calendar-spread paper.
+
+    Expected raw columns:
+        timestamp, trading_day, product_family, contract_code,
+        bid1, ask1, volume, optional update_event_id.
+
+    This helper is included for reproducibility documentation. Freqtrade's
+    normal OHLCV pipeline does not create synchronized F1/F2 L1 order-book
+    rows automatically; prepare those rows before using this strategy.
+    """
+
+    def __init__(self, event_window_ms: int = 500):
+        self.event_window_ms = event_window_ms
+
+    def rank_contracts_by_daily_volume(self, raw: DataFrame) -> DataFrame:
+        required = {"trading_day", "product_family", "contract_code", "volume"}
+        missing = required.difference(raw.columns)
+        if missing:
+            raise ValueError(f"Missing required columns for F1/F2 ranking: {sorted(missing)}")
+        daily_volume = (
+            raw.groupby(["trading_day", "product_family", "contract_code"], as_index=False)["volume"]
+            .max()
+            .sort_values(["trading_day", "product_family", "volume"], ascending=[True, True, False])
+        )
+        daily_volume["liquidity_rank"] = daily_volume.groupby(["trading_day", "product_family"]).cumcount() + 1
+        return daily_volume
+
+    def synchronize(self, raw: DataFrame) -> DataFrame:
+        required = {"timestamp", "trading_day", "product_family", "contract_code", "bid1", "ask1", "volume"}
+        missing = required.difference(raw.columns)
+        if missing:
+            raise ValueError(f"Missing required L1 columns: {sorted(missing)}")
+        df = raw.copy()
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        if "update_event_id" not in df.columns:
+            # Approximate the paper's roughly 500ms event grid when no explicit event id exists.
+            df["update_event_id"] = df["timestamp"].dt.floor(f"{self.event_window_ms}ms")
+        ranks = self.rank_contracts_by_daily_volume(df)
+        df = df.merge(ranks[["trading_day", "product_family", "contract_code", "liquidity_rank"]], on=["trading_day", "product_family", "contract_code"], how="left")
+        df = df[df["liquidity_rank"].isin([1, 2])].copy()
+        df["leg"] = df["liquidity_rank"].map({1: "F1", 2: "F2"})
+        event_ts = df.groupby(["trading_day", "product_family", "update_event_id"])["timestamp"].min().rename("sync_timestamp")
+        df = df.merge(event_ts, on=["trading_day", "product_family", "update_event_id"], how="left")
+        wide = df.pivot_table(index=["trading_day", "product_family", "sync_timestamp"], columns="leg", values=["bid1", "ask1", "contract_code"], aggfunc="last")
+        wide.columns = [f"{leg}_{field}" for field, leg in wide.columns]
+        wide = wide.reset_index().sort_values(["trading_day", "product_family", "sync_timestamp"])
+        fill_cols = [c for c in wide.columns if c.startswith("F1_") or c.startswith("F2_")]
+        wide[fill_cols] = wide.groupby(["trading_day", "product_family"])[fill_cols].ffill()
+        return wide.dropna(subset=["F1_bid1", "F1_ask1", "F2_bid1", "F2_ask1"])
+
+
+class LeadLagCalendarSpreadFeedbackEngine:
+    """Paper-faithful state machine for tick/event-level research use."""
+
+    def __init__(self, product_family: str = "{{ product_family }}", tick_size: float = {{ tick_size }}, ema_cycle: int = {{ ema_cycle }}, lambda_price: float | None = None, max_position: int = {{ max_position }}, fee_per_execution: float = {{ fee_per_execution }}):
+        self.product_family = product_family
+        self.tick_size = tick_size
+        self.ema_cycle = ema_cycle
+        self.alpha = 2 / (ema_cycle + 1)
+        self.lambda_price = lambda_price if lambda_price is not None else (PAPER_LAMBDA_PRICE[product_family] if {{ use_paper_thresholds }} else {{ lambda_price }})
+        self.max_position = max_position
+        self.fee_per_execution = fee_per_execution
+        self.position = 0
+        self.ema_spread = None
+
+    def on_tick(self, tick: dict):
+        f1_bid, f1_ask = tick["F1_bid1"], tick["F1_ask1"]
+        f2_bid, f2_ask = tick["F2_bid1"], tick["F2_ask1"]
+        if any(x is None for x in [f1_bid, f1_ask, f2_bid, f2_ask]):
+            return None
+        if (f1_ask - f1_bid) > {{ max_f1_spread_ticks }} * self.tick_size:
+            return None
+        f1_mid = 0.5 * (f1_bid + f1_ask)
+        f2_mid = 0.5 * (f2_bid + f2_ask)
+        spread = f1_mid - f2_mid
+        if self.ema_spread is None:
+            self.ema_spread = spread
+            return None
+        self.ema_spread = self.alpha * spread + (1 - self.alpha) * self.ema_spread
+        theta = spread - self.ema_spread
+        if theta >= self.lambda_price:
+            target_position = -1
+        elif theta <= -self.lambda_price:
+            target_position = 1
+        else:
+            target_position = 0 if "{{ exit_rule }}" == "flat_when_inside_band" else self.position
+        target_position = max(-self.max_position, min(self.max_position, target_position))
+        delta = target_position - self.position
+        if delta == 0:
+            return None
+        side = "BUY" if delta > 0 else "SELL"
+        execution_price = f1_ask if delta > 0 else f1_bid
+        self.position = target_position
+        return {"side": side, "quantity": abs(delta), "execution_price": execution_price, "fee": abs(delta) * self.fee_per_execution, "theta": theta, "target_position": target_position}
+
+
+class {{ strategy_name }}(IStrategy):
+    """
+    Paper-replication draft for Li, Chen, and Liu (2025).
+
+    Required prepared dataframe columns for faithful mode:
+        F1_bid1, F1_ask1, F2_bid1, F2_ask1, and optionally F1_contract_code.
+
+    Important: this is a strategy-file scaffold. Freqtrade does not natively
+    provide synchronized CFFEX Level-1 tick data; prepare the synchronized
+    F1/F2 dataframe outside Freqtrade before using the signal literally.
+    """
+
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+    can_short = {{ allow_short }}
+    process_only_new_candles = True
+{{ common_class_block|indent(4, true) }}
+
+    product_family = "{{ product_family }}"
+    tick_size = {{ tick_size }}
+    ema_cycle = {{ ema_cycle }}
+    lambda_price = PAPER_LAMBDA_PRICE[product_family] if {{ use_paper_thresholds }} else {{ lambda_price }}
+    max_f1_spread = {{ max_f1_spread_ticks }} * tick_size
+    fee_per_execution = {{ fee_per_execution }}
+    max_position = {{ max_position }}
+    exit_rule = "{{ exit_rule }}"
+    strict_level1_columns = {{ strict_level1_columns }}
+
+    def _ensure_l1_columns(self, dataframe: DataFrame) -> DataFrame:
+        required = ["F1_bid1", "F1_ask1", "F2_bid1", "F2_ask1"]
+        missing = [col for col in required if col not in dataframe.columns]
+        if missing and self.strict_level1_columns:
+            raise ValueError(
+                "LeadLagCalendarSpreadFeedbackStrategy requires synchronized Level-1 F1/F2 columns: "
+                + ", ".join(required)
+                + f". Missing: {missing}. Do not use ordinary OHLCV bars for paper-replication mode."
+            )
+        if missing:
+            # Non-faithful fallback for preview only. Keep strict_level1_columns=True for research use.
+            dataframe["F1_bid1"] = dataframe["close"]
+            dataframe["F1_ask1"] = dataframe["close"]
+            dataframe["F2_bid1"] = dataframe["close"].shift(1)
+            dataframe["F2_ask1"] = dataframe["close"].shift(1)
+        return dataframe
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe = self._ensure_l1_columns(dataframe)
+        dataframe["F1_mid"] = (dataframe["F1_bid1"] + dataframe["F1_ask1"]) / 2.0
+        dataframe["F2_mid"] = (dataframe["F2_bid1"] + dataframe["F2_ask1"]) / 2.0
+        dataframe["calendar_spread"] = dataframe["F1_mid"] - dataframe["F2_mid"]
+        dataframe["ema_calendar_spread"] = dataframe["calendar_spread"].ewm(span=self.ema_cycle, adjust=False).mean()
+        dataframe["theta_price"] = dataframe["calendar_spread"] - dataframe["ema_calendar_spread"]
+        dataframe["F1_l1_spread"] = dataframe["F1_ask1"] - dataframe["F1_bid1"]
+        dataframe["paper_trade_allowed"] = dataframe["F1_l1_spread"] <= self.max_f1_spread
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        valid = dataframe["paper_trade_allowed"] & dataframe["theta_price"].notna()
+        dataframe.loc[valid & (dataframe["theta_price"] <= -self.lambda_price), "enter_long"] = 1
+        if self.can_short:
+            dataframe.loc[valid & (dataframe["theta_price"] >= self.lambda_price), "enter_short"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        if self.exit_rule == "flat_when_inside_band":
+            inside = dataframe["theta_price"].abs() < self.lambda_price
+            dataframe.loc[inside & dataframe["theta_price"].notna(), "exit_long"] = 1
+            if self.can_short:
+                dataframe.loc[inside & dataframe["theta_price"].notna(), "exit_short"] = 1
+        else:
+            dataframe.loc[dataframe["theta_price"] >= self.lambda_price, "exit_long"] = 1
+            if self.can_short:
+                dataframe.loc[dataframe["theta_price"] <= -self.lambda_price, "exit_short"] = 1
+        return dataframe

@@ -1,0 +1,49 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["regime_ema"] = ta.EMA(dataframe, timeperiod={{ regime_ema_window }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        macd = ta.MACD(dataframe)
+        dataframe["macd"] = macd["macd"]
+        dataframe["macdsignal"] = macd["macdsignal"]
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        return dataframe
+
+    def _stack_count(self, dataframe: DataFrame):
+        count = 0
+        count = count + (dataframe["ema_fast"] > dataframe["ema_slow"]).astype(int)
+        count = count + (dataframe["rsi"] > {{ rsi_min }}).astype(int)
+        count = count + (dataframe["macd"] > dataframe["macdsignal"]).astype(int)
+{% if use_volume_confirmation %}
+        count = count + (dataframe["volume"] > dataframe["volume_ma"] * {{ volume_multiplier }}).astype(int)
+{% endif %}
+{% if use_regime_filter %}
+        count = count + (dataframe["close"] > dataframe["regime_ema"]).astype(int)
+{% endif %}
+{% if use_low_volatility_filter %}
+        count = count + (dataframe["atr_pct"] < {{ max_atr_pct }}).astype(int)
+{% endif %}
+        return count
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        stack_count = self._stack_count(dataframe)
+        dataframe.loc[stack_count >= {{ min_confirmations }}, "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        stack_count = self._stack_count(dataframe)
+        risk_exit = dataframe["close"] < (dataframe["ema_slow"] - dataframe["atr"] * {{ atr_stop_mult }})
+        dataframe.loc[(stack_count <= {{ exit_confirmations }}) | risk_exit, "exit_long"] = 1
+        return dataframe

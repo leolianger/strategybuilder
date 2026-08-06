@@ -1,0 +1,47 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["trend_ema"] = ta.EMA(dataframe, timeperiod={{ trend_ema }})
+        dataframe["asset_momentum"] = ta.ROC(dataframe, timeperiod={{ momentum_window }})
+        if "benchmark_close" in dataframe.columns:
+            dataframe["benchmark_proxy"] = dataframe["benchmark_close"]
+        else:
+            dataframe["benchmark_proxy"] = ta.EMA(dataframe, timeperiod={{ benchmark_proxy_ema }})
+        dataframe["relative_strength"] = dataframe["close"] / dataframe["benchmark_proxy"]
+        dataframe["relative_momentum"] = dataframe["relative_strength"].pct_change({{ relative_window }}) * 100.0
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        entry = (
+            (dataframe["close"] > dataframe["trend_ema"]) &
+            (dataframe["asset_momentum"] > {{ min_asset_momentum }}) &
+            (dataframe["relative_momentum"] > {{ min_relative_momentum }}) &
+            (dataframe["rsi"] < {{ rsi_ceiling }}) &
+            (dataframe["atr_pct"] <= {{ max_atr_pct }}) &
+            (dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }})
+        )
+        dataframe.loc[entry & dataframe["trend_ema"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        exit_condition = (
+            (dataframe["relative_momentum"] < {{ exit_relative_momentum }}) |
+            (dataframe["asset_momentum"] < {{ exit_asset_momentum }}) |
+            (dataframe["close"] < dataframe["trend_ema"]) |
+            (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        )
+        dataframe.loc[exit_condition & dataframe["trend_ema"].notna(), "exit_long"] = 1
+        return dataframe

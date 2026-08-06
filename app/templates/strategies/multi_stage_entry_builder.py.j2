@@ -1,0 +1,42 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["setup_ema"] = ta.EMA(dataframe, timeperiod={{ setup_ema }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["channel_high"] = dataframe["high"].rolling({{ trigger_window }}).max().shift(1)
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        setup_trend = (dataframe["close"] > dataframe["setup_ema"]) & (dataframe["ema_fast"] > dataframe["ema_slow"])
+        setup_recovery = (dataframe["rsi"] <= {{ pullback_rsi_max }}) & (dataframe["close"] > dataframe["setup_ema"])
+        trigger_breakout = dataframe["close"] > dataframe["channel_high"]
+        trigger_momentum = dataframe["rsi"] >= {{ trigger_rsi_min }}
+        confirmation = (dataframe["adx"] >= {{ adx_min }}) & (dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}) & (dataframe["atr_pct"] <= {{ max_entry_atr_pct }})
+{% if entry_stage_mode == "setup_then_trigger" %}
+        entry_condition = (setup_trend | setup_recovery) & (trigger_breakout | trigger_momentum) & confirmation
+{% elif entry_stage_mode == "trend_setup" %}
+        entry_condition = setup_trend & trigger_momentum & confirmation
+{% else %}
+        entry_condition = (setup_trend | setup_recovery) & confirmation
+{% endif %}
+        dataframe.loc[entry_condition & dataframe["setup_ema"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        exit_condition = (dataframe["ema_fast"] < dataframe["ema_slow"]) | (dataframe["rsi"] <= {{ rsi_exit_floor }}) | (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        dataframe.loc[exit_condition & dataframe["setup_ema"].notna(), "exit_long"] = 1
+        return dataframe

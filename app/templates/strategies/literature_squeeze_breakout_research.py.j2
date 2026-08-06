@@ -1,0 +1,47 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        mid = dataframe["close"].rolling({{ bb_period }}).mean()
+        std = dataframe["close"].rolling({{ bb_period }}).std()
+        dataframe["bb_upper"] = mid + std * {{ bb_stddev }}
+        dataframe["bb_lower"] = mid - std * {{ bb_stddev }}
+        dataframe["bb_width"] = (dataframe["bb_upper"] - dataframe["bb_lower"]) / mid * 100.0
+        dataframe["bb_width_avg"] = dataframe["bb_width"].rolling({{ squeeze_window }}).mean()
+        dataframe["prior_high"] = dataframe["high"].rolling({{ breakout_window }}).max().shift(1)
+        dataframe["ema_trend"] = ta.EMA(dataframe, timeperiod={{ trend_ema }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        squeeze = dataframe["bb_width"] <= dataframe["bb_width_avg"] * {{ squeeze_multiplier }}
+        breakout = dataframe["close"] > dataframe["prior_high"] * (1 + {{ breakout_buffer_pct }} / 100.0)
+        entry = (
+            squeeze & breakout &
+            (dataframe["close"] > dataframe["ema_trend"]) &
+            (dataframe["adx"] >= {{ adx_min }}) &
+            (dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}) &
+            (dataframe["atr_pct"] <= {{ max_atr_pct }})
+        )
+        dataframe.loc[entry & dataframe["prior_high"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        exit_condition = (
+            (dataframe["close"] < dataframe["ema_trend"]) |
+            (dataframe["bb_width"] > dataframe["bb_width_avg"] * {{ exit_width_multiplier }}) |
+            (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        )
+        dataframe.loc[exit_condition & dataframe["ema_trend"].notna(), "exit_long"] = 1
+        return dataframe

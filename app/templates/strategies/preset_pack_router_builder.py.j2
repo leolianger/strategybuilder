@@ -1,0 +1,49 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["ema_guard"] = ta.EMA(dataframe, timeperiod={{ ema_guard }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        return dataframe
+
+    def _quality_score(self, dataframe: DataFrame):
+        score = 0
+        score = score + ((dataframe["ema_fast"] > dataframe["ema_slow"]).astype(int) * {{ trend_weight }})
+        score = score + (((dataframe["rsi"] >= {{ rsi_min }}) & (dataframe["rsi"] <= {{ rsi_max }})).astype(int) * {{ momentum_weight }})
+        score = score + ((dataframe["adx"] >= {{ adx_min }}).astype(int) * {{ strength_weight }})
+        score = score + ((dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}).astype(int) * {{ volume_weight }})
+        score = score + ((dataframe["atr_pct"] <= {{ max_entry_atr_pct }}).astype(int) * {{ volatility_weight }})
+        return score
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        score = self._quality_score(dataframe)
+{% if preset_pack == "simple" %}
+        entry_condition = (dataframe["ema_fast"] > dataframe["ema_slow"]) & (dataframe["rsi"] >= {{ rsi_min }})
+{% elif preset_pack == "defensive" %}
+        entry_condition = (score >= {{ defensive_score }}) & (dataframe["close"] > dataframe["ema_guard"]) & (dataframe["atr_pct"] <= {{ max_entry_atr_pct }})
+{% elif preset_pack == "exploratory" %}
+        entry_condition = score >= {{ exploratory_score }}
+{% else %}
+        entry_condition = score >= {{ balanced_score }}
+{% endif %}
+        dataframe.loc[entry_condition & dataframe["ema_guard"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        score = self._quality_score(dataframe)
+        exit_condition = (score <= {{ exit_score }}) | (dataframe["ema_fast"] < dataframe["ema_slow"]) | (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        dataframe.loc[exit_condition & dataframe["ema_guard"].notna(), "exit_long"] = 1
+        return dataframe

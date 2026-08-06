@@ -1,0 +1,40 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["trend_ema"] = ta.EMA(dataframe, timeperiod={{ trend_ema_window }})
+        dataframe["pullback_ema"] = ta.EMA(dataframe, timeperiod={{ pullback_ema_window }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        trend_ok = dataframe["close"] > dataframe["trend_ema"]
+        pullback_zone = dataframe["close"] <= dataframe["pullback_ema"] * (1.0 + {{ pullback_buffer_pct }} / 100.0)
+        recovery_ok = dataframe["rsi"] > {{ rsi_recovery_min }}
+        cond = trend_ok & pullback_zone & recovery_ok
+{% if use_volume_confirmation %}
+        cond = cond & (dataframe["volume"] > dataframe["volume_ma"] * {{ volume_multiplier }})
+{% endif %}
+        dataframe.loc[cond & dataframe["trend_ema"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cond = (
+            (dataframe["close"] < dataframe["pullback_ema"]) |
+            (dataframe["rsi"] < {{ rsi_exit_min }})
+        )
+{% if use_atr_protection %}
+        risk_cond = dataframe["close"] < (dataframe["trend_ema"] - dataframe["atr"] * {{ atr_stop_mult }})
+        cond = cond | risk_cond
+{% endif %}
+        dataframe.loc[cond & dataframe["pullback_ema"].notna(), "exit_long"] = 1
+        return dataframe

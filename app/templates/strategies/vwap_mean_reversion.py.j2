@@ -1,0 +1,25 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        tp = (dataframe["high"] + dataframe["low"] + dataframe["close"]) / 3.0
+        pv = tp * dataframe["volume"]
+        dataframe["vwap"] = pv.cumsum() / dataframe["volume"].replace(0, 1).cumsum()
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cond = dataframe["close"] < dataframe["vwap"] * (1 - {{ deviation_pct }})
+        dataframe.loc[cond & dataframe["vwap"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cond = dataframe["close"] >= dataframe["vwap"]
+        dataframe.loc[cond & dataframe["vwap"].notna(), "exit_long"] = 1
+        return dataframe

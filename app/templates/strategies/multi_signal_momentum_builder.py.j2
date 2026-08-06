@@ -1,0 +1,26 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cond = ((dataframe["ema_fast"] > dataframe["ema_slow"]) & (dataframe["rsi"] > {{ rsi_entry_min }}) & (dataframe["volume"] > dataframe["volume_ma"] * {{ volume_multiplier }}))
+        dataframe.loc[cond & dataframe["ema_slow"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cond = (dataframe["ema_fast"] < dataframe["ema_slow"]) | (dataframe["rsi"] < {{ rsi_exit_min }})
+        dataframe.loc[cond & dataframe["ema_slow"].notna(), "exit_long"] = 1
+        return dataframe

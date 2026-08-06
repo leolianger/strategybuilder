@@ -1,0 +1,66 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["exit_ema"] = ta.EMA(dataframe, timeperiod={{ exit_ema }})
+        return dataframe
+
+    def _entry_condition_count(self, dataframe: DataFrame):
+        trend_condition = (dataframe["ema_fast"] > dataframe["ema_slow"]).astype(int)
+        rsi_condition = ((dataframe["rsi"] >= {{ rsi_min }}) & (dataframe["rsi"] <= {{ rsi_max }})).astype(int)
+        adx_condition = (dataframe["adx"] >= {{ adx_min }}).astype(int)
+        volume_condition = (dataframe["volume"] > dataframe["volume_ma"] * {{ volume_multiplier }}).astype(int)
+        volatility_condition = (dataframe["atr_pct"] <= {{ max_atr_pct }}).astype(int)
+        return trend_condition + rsi_condition + adx_condition + volume_condition + volatility_condition
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        condition_count = self._entry_condition_count(dataframe)
+{% if combination_mode == "all_required" %}
+        entry_condition = condition_count >= 5
+{% elif combination_mode == "any_three" %}
+        entry_condition = condition_count >= 3
+{% elif combination_mode == "weighted_score" %}
+        weighted_score = 0
+        weighted_score = weighted_score + ((dataframe["ema_fast"] > dataframe["ema_slow"]).astype(int) * {{ trend_weight }})
+        weighted_score = weighted_score + (((dataframe["rsi"] >= {{ rsi_min }}) & (dataframe["rsi"] <= {{ rsi_max }})).astype(int) * {{ momentum_weight }})
+        weighted_score = weighted_score + ((dataframe["adx"] >= {{ adx_min }}).astype(int) * {{ strength_weight }})
+        weighted_score = weighted_score + ((dataframe["volume"] > dataframe["volume_ma"] * {{ volume_multiplier }}).astype(int) * {{ volume_weight }})
+        weighted_score = weighted_score + ((dataframe["atr_pct"] <= {{ max_atr_pct }}).astype(int) * {{ volatility_weight }})
+        entry_condition = weighted_score >= {{ min_weighted_score }}
+{% else %}
+        entry_condition = condition_count >= 2
+{% endif %}
+        dataframe.loc[entry_condition & dataframe["ema_slow"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+{% if exit_mode == "opposite_signal" %}
+        exit_condition = dataframe["ema_fast"] < dataframe["ema_slow"]
+{% elif exit_mode == "rsi_fade" %}
+        exit_condition = dataframe["rsi"] < {{ rsi_exit_floor }}
+{% elif exit_mode == "trend_break" %}
+        exit_condition = dataframe["close"] < dataframe["exit_ema"]
+{% else %}
+        exit_condition = (
+            (dataframe["ema_fast"] < dataframe["ema_slow"]) |
+            (dataframe["rsi"] < {{ rsi_exit_floor }}) |
+            (dataframe["close"] < dataframe["exit_ema"]) |
+            (dataframe["atr_pct"] > {{ hard_atr_pct }})
+        )
+{% endif %}
+        dataframe.loc[exit_condition & dataframe["ema_slow"].notna(), "exit_long"] = 1
+        return dataframe

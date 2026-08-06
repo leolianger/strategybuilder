@@ -1,0 +1,72 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["trend_fast"] = ta.EMA(dataframe, timeperiod={{ trend_fast_window }})
+        dataframe["trend_slow"] = ta.EMA(dataframe, timeperiod={{ trend_slow_window }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["roc"] = ta.ROC(dataframe, timeperiod={{ roc_period }})
+        macd = ta.MACD(dataframe)
+        dataframe["macd"] = macd["macd"]
+        dataframe["macdsignal"] = macd["macdsignal"]
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["obv"] = ta.OBV(dataframe)
+        dataframe["obv_ema"] = ta.EMA(dataframe["obv"], timeperiod={{ volume_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["regime_ema"] = ta.EMA(dataframe, timeperiod={{ regime_ema_window }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["risk_ma"] = ta.EMA(dataframe, timeperiod={{ risk_ma_window }})
+        return dataframe
+
+    def _score(self, dataframe: DataFrame):
+        score = 0
+        score = score + ((dataframe["trend_fast"] > dataframe["trend_slow"]).astype(int) * {{ trend_weight }})
+{% if momentum_method == "RSI" %}
+        score = score + ((dataframe["rsi"] > {{ rsi_min }}).astype(int) * {{ momentum_weight }})
+{% elif momentum_method == "MACD" %}
+        score = score + ((dataframe["macd"] > dataframe["macdsignal"]).astype(int) * {{ momentum_weight }})
+{% elif momentum_method == "ROC" %}
+        score = score + ((dataframe["roc"] > {{ roc_min }}).astype(int) * {{ momentum_weight }})
+{% endif %}
+{% if volume_method == "volume_ma" %}
+        score = score + ((dataframe["volume"] > dataframe["volume_ma"]).astype(int) * {{ volume_weight }})
+{% elif volume_method == "obv_trend" %}
+        score = score + ((dataframe["obv"] > dataframe["obv_ema"]).astype(int) * {{ volume_weight }})
+{% endif %}
+{% if volatility_method == "low_atr_pct" %}
+        score = score + ((dataframe["atr_pct"] < {{ max_atr_pct }}).astype(int) * {{ volatility_weight }})
+{% elif volatility_method == "atr_breakout" %}
+        score = score + ((dataframe["close"] > dataframe["trend_slow"] + dataframe["atr"] * 0.2).astype(int) * {{ volatility_weight }})
+{% endif %}
+{% if regime_method == "ema200_uptrend" %}
+        score = score + ((dataframe["close"] > dataframe["regime_ema"]).astype(int) * {{ regime_weight }})
+{% elif regime_method == "adx_strength" %}
+        score = score + ((dataframe["adx"] > {{ adx_threshold }}).astype(int) * {{ regime_weight }})
+{% endif %}
+        return score
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        score = self._score(dataframe)
+        dataframe.loc[(score >= {{ min_entry_score }}) & dataframe["trend_slow"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        score = self._score(dataframe)
+        exit_condition = (score <= {{ exit_score }})
+{% if risk_exit_method == "atr_band" %}
+        risk_condition = dataframe["close"] < (dataframe["trend_slow"] - dataframe["atr"] * {{ atr_stop_mult }})
+        exit_condition = exit_condition | risk_condition
+{% elif risk_exit_method == "ema_stop" %}
+        risk_condition = dataframe["close"] < dataframe["risk_ma"]
+        exit_condition = exit_condition | risk_condition
+{% endif %}
+        dataframe.loc[exit_condition & dataframe["trend_slow"].notna(), "exit_long"] = 1
+        return dataframe

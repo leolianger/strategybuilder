@@ -1,0 +1,38 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        high_conv = dataframe["high"].rolling({{ conversion_period }}).max()
+        low_conv = dataframe["low"].rolling({{ conversion_period }}).min()
+        dataframe["tenkan"] = (high_conv + low_conv) / 2.0
+
+        high_base = dataframe["high"].rolling({{ base_period }}).max()
+        low_base = dataframe["low"].rolling({{ base_period }}).min()
+        dataframe["kijun"] = (high_base + low_base) / 2.0
+
+        span_a = ((dataframe["tenkan"] + dataframe["kijun"]) / 2.0).shift({{ base_period }})
+        high_span_b = dataframe["high"].rolling({{ span_b_period }}).max()
+        low_span_b = dataframe["low"].rolling({{ span_b_period }}).min()
+        span_b = ((high_span_b + low_span_b) / 2.0).shift({{ base_period }})
+        dataframe["senkou_a"] = span_a
+        dataframe["senkou_b"] = span_b
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cloud_top = dataframe[["senkou_a", "senkou_b"]].max(axis=1)
+        cond = (dataframe["close"] > cloud_top) & (dataframe["tenkan"] > dataframe["kijun"])
+        dataframe.loc[cond & cloud_top.notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cloud_bottom = dataframe[["senkou_a", "senkou_b"]].min(axis=1)
+        cond = (dataframe["close"] < cloud_bottom) | (dataframe["tenkan"] < dataframe["kijun"])
+        dataframe.loc[cond & cloud_bottom.notna(), "exit_long"] = 1
+        return dataframe

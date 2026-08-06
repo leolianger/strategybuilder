@@ -1,0 +1,45 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["mfi"] = ta.MFI(dataframe, timeperiod={{ mfi_period }})
+        dataframe["obv"] = ta.OBV(dataframe)
+        dataframe["obv_ema"] = ta.EMA(dataframe["obv"], timeperiod={{ obv_period }})
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        liquidity_ok = dataframe["volume"] >= dataframe["volume_ma"] * {{ min_volume_ratio }}
+        entry = (
+            (dataframe["ema_fast"] > dataframe["ema_slow"]) &
+            (dataframe["rsi"] >= {{ rsi_min }}) &
+            (dataframe["rsi"] <= {{ rsi_max }}) &
+            (dataframe["mfi"] >= {{ mfi_min }}) &
+            (dataframe["obv"] > dataframe["obv_ema"]) &
+            liquidity_ok &
+            (dataframe["atr_pct"] <= {{ max_atr_pct }})
+        )
+        dataframe.loc[entry & dataframe["obv_ema"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        exit_condition = (
+            (dataframe["ema_fast"] < dataframe["ema_slow"]) |
+            (dataframe["mfi"] < {{ mfi_exit }}) |
+            (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        )
+        dataframe.loc[exit_condition & dataframe["obv_ema"].notna(), "exit_long"] = 1
+        return dataframe

@@ -1,0 +1,39 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+    can_short = {{ allow_short }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["proxy_ema"] = ta.EMA(dataframe, timeperiod={{ proxy_ema }})
+        if "{{ proxy_mode }}" == "reference_close_column" and "reference_close" in dataframe.columns:
+            dataframe["reference_price"] = dataframe["reference_close"]
+        else:
+            dataframe["reference_price"] = dataframe["proxy_ema"]
+        dataframe["spread_proxy"] = dataframe["close"] - dataframe["reference_price"]
+        dataframe["spread_ema"] = dataframe["spread_proxy"].ewm(span={{ ema_cycle }}, adjust=False).mean()
+        dataframe["spread_deviation_pct"] = (dataframe["spread_proxy"] - dataframe["spread_ema"]) / dataframe["close"] * 100.0
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        ready = dataframe["spread_deviation_pct"].notna() & dataframe["rsi"].notna()
+        long_entry = ready & (dataframe["spread_deviation_pct"] <= -{{ spread_threshold_pct }}) & (dataframe["rsi"] <= {{ rsi_long_max }})
+        dataframe.loc[long_entry, "enter_long"] = 1
+        if self.can_short:
+            short_entry = ready & (dataframe["spread_deviation_pct"] >= {{ spread_threshold_pct }}) & (dataframe["rsi"] >= {{ rsi_short_min }})
+            dataframe.loc[short_entry, "enter_short"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        normalized = dataframe["spread_deviation_pct"].abs() < ({{ spread_threshold_pct }} * 0.25)
+        dataframe.loc[normalized | (dataframe["rsi"] >= 55), "exit_long"] = 1
+        if self.can_short:
+            dataframe.loc[normalized | (dataframe["rsi"] <= 45), "exit_short"] = 1
+        return dataframe

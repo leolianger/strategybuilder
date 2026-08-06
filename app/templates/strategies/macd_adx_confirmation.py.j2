@@ -1,0 +1,33 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["trend_ema"] = ta.EMA(dataframe, timeperiod={{ trend_ema_window }})
+        macd = ta.MACD(dataframe, fastperiod={{ macd_fast }}, slowperiod={{ macd_slow }}, signalperiod={{ macd_signal }})
+        dataframe["macd"] = macd["macd"]
+        dataframe["macdsignal"] = macd["macdsignal"]
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        macd_confirm = dataframe["macd"] > dataframe["macdsignal"]
+        trend_confirm = dataframe["close"] > dataframe["trend_ema"]
+        strength_confirm = dataframe["adx"] >= {{ adx_entry_threshold }}
+        rsi_not_overheated = dataframe["rsi"] <= {{ rsi_entry_max }}
+        dataframe.loc[macd_confirm & trend_confirm & strength_confirm & rsi_not_overheated, "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        macd_decay = dataframe["macd"] < dataframe["macdsignal"]
+        trend_loss = dataframe["close"] < dataframe["trend_ema"]
+        strength_loss = dataframe["adx"] < {{ adx_exit_threshold }}
+        dataframe.loc[macd_decay | trend_loss | strength_loss, "exit_long"] = 1
+        return dataframe

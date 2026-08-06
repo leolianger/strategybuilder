@@ -1,0 +1,37 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        macd = ta.MACD(dataframe)
+        dataframe["macd"] = macd["macd"]
+        dataframe["macdsignal"] = macd["macdsignal"]
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        score = 0
+        score = score + ((dataframe["ema_fast"] > dataframe["ema_slow"]).astype(int) * {{ ema_weight }})
+        score = score + ((dataframe["rsi"] > {{ rsi_min }}).astype(int) * {{ rsi_weight }})
+        score = score + ((dataframe["volume"] > dataframe["volume_ma"]).astype(int) * {{ volume_weight }})
+        score = score + ((dataframe["macd"] > dataframe["macdsignal"]).astype(int) * {{ macd_weight }})
+        dataframe.loc[(score >= {{ min_entry_score }}) & dataframe["ema_slow"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        score = 0
+        score = score + ((dataframe["ema_fast"] > dataframe["ema_slow"]).astype(int) * {{ ema_weight }})
+        score = score + ((dataframe["rsi"] > {{ rsi_min }}).astype(int) * {{ rsi_weight }})
+        score = score + ((dataframe["volume"] > dataframe["volume_ma"]).astype(int) * {{ volume_weight }})
+        score = score + ((dataframe["macd"] > dataframe["macdsignal"]).astype(int) * {{ macd_weight }})
+        dataframe.loc[(score <= {{ exit_score }}) & dataframe["ema_slow"].notna(), "exit_long"] = 1
+        return dataframe

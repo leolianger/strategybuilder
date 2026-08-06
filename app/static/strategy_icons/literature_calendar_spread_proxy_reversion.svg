@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 100" role="img" aria-label="literature_calendar_spread_proxy_reversion.svg">
+  <rect x="8" y="8" width="144" height="84" rx="20" fill="#ffffff" stroke="#7c3aed" stroke-width="4"/>
+  <path d="M28 66 C52 30, 70 30, 94 55 S128 74, 140 38" fill="none" stroke="#7c3aed" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="42" cy="58" r="10" fill="#7c3aed" opacity="0.18"/>
+  <circle cx="118" cy="52" r="10" fill="#7c3aed" opacity="0.18"/>
+  <text x="80" y="54" text-anchor="middle" font-family="Inter, Arial" font-size="28" font-weight="800" fill="#7c3aed">↔</text>
+  <text x="32" y="82" text-anchor="middle" font-family="Inter, Arial" font-size="14" font-weight="700" fill="#334155">SPR</text>
+  <text x="128" y="82" text-anchor="middle" font-family="Inter, Arial" font-size="14" font-weight="700" fill="#334155">EMA</text>
+</svg>

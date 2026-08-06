@@ -1,0 +1,31 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["kama_fast"] = ta.KAMA(dataframe, timeperiod={{ fast_kama_period }})
+        dataframe["kama_slow"] = ta.KAMA(dataframe, timeperiod={{ slow_kama_period }})
+        dataframe["kama_slope"] = dataframe["kama_fast"].diff({{ slope_window }})
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cond = (
+            (dataframe["kama_fast"] > dataframe["kama_slow"]) &
+            (dataframe["kama_slope"] > {{ min_slope }})
+        )
+        dataframe.loc[cond & dataframe["kama_slow"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cond = (
+            (dataframe["kama_fast"] < dataframe["kama_slow"]) |
+            (dataframe["kama_slope"] < 0)
+        )
+        dataframe.loc[cond & dataframe["kama_slow"].notna(), "exit_long"] = 1
+        return dataframe

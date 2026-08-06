@@ -1,0 +1,90 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["trend_ema"] = ta.EMA(dataframe, timeperiod={{ trend_ema_window }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        macd = ta.MACD(dataframe)
+        dataframe["macd"] = macd["macd"]
+        dataframe["macdsignal"] = macd["macdsignal"]
+        bb = ta.BBANDS(dataframe, timeperiod={{ bb_period }}, nbdevup=2.0, nbdevdn=2.0)
+        dataframe["bb_upper"] = bb["upperband"]
+        dataframe["bb_middle"] = bb["middleband"]
+        dataframe["bb_lower"] = bb["lowerband"]
+        dataframe["bb_width_pct"] = (dataframe["bb_upper"] - dataframe["bb_lower"]) / dataframe["bb_middle"] * 100.0
+        dataframe["channel_high"] = dataframe["high"].rolling({{ channel_window }}).max().shift(1)
+        dataframe["channel_low"] = dataframe["low"].rolling({{ exit_window }}).min().shift(1)
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+{% if base_signal == "ema_trend" %}
+        base_entry = dataframe["ema_fast"] > dataframe["ema_slow"]
+{% elif base_signal == "rsi_reversion" %}
+        base_entry = dataframe["rsi"] < {{ rsi_buy }}
+{% else %}
+        base_entry = dataframe["close"] > dataframe["channel_high"]
+{% endif %}
+{% if use_trend_guard %}
+        trend_guard = dataframe["close"] > dataframe["trend_ema"]
+{% else %}
+        trend_guard = dataframe["close"] >= 0
+{% endif %}
+{% if use_momentum_confirmation %}
+        momentum_confirm = (dataframe["macd"] > dataframe["macdsignal"]) & (dataframe["rsi"] > {{ rsi_momentum_min }})
+{% else %}
+        momentum_confirm = dataframe["close"] >= 0
+{% endif %}
+{% if use_rsi_confirmation %}
+        rsi_confirm = (dataframe["rsi"] >= {{ rsi_confirm_min }}) & (dataframe["rsi"] <= {{ rsi_confirm_max }})
+{% else %}
+        rsi_confirm = dataframe["close"] >= 0
+{% endif %}
+{% if use_adx_confirmation %}
+        adx_confirm = dataframe["adx"] >= {{ adx_threshold }}
+{% else %}
+        adx_confirm = dataframe["close"] >= 0
+{% endif %}
+{% if use_volume_confirmation %}
+        volume_confirm = dataframe["volume"] > dataframe["volume_ma"] * {{ volume_multiplier }}
+{% else %}
+        volume_confirm = dataframe["volume"] >= 0
+{% endif %}
+{% if use_volatility_filter %}
+        volatility_filter = dataframe["atr_pct"] <= {{ max_atr_pct }}
+{% else %}
+        volatility_filter = dataframe["close"] >= 0
+{% endif %}
+{% if use_squeeze_confirmation %}
+        squeeze_confirm = dataframe["bb_width_pct"] <= {{ max_bandwidth_pct }}
+{% else %}
+        squeeze_confirm = dataframe["close"] >= 0
+{% endif %}
+        dataframe.loc[base_entry & trend_guard & momentum_confirm & rsi_confirm & adx_confirm & volume_confirm & volatility_filter & squeeze_confirm, "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+{% if base_signal == "ema_trend" %}
+        base_exit = dataframe["ema_fast"] < dataframe["ema_slow"]
+{% elif base_signal == "rsi_reversion" %}
+        base_exit = dataframe["rsi"] > {{ rsi_sell }}
+{% else %}
+        base_exit = dataframe["close"] < dataframe["channel_low"]
+{% endif %}
+        confirmation_loss = dataframe["macd"] < dataframe["macdsignal"]
+        volatility_exit = dataframe["atr_pct"] > {{ hard_atr_pct }}
+        adx_loss = dataframe["adx"] < {{ adx_exit_threshold }}
+        dataframe.loc[base_exit | confirmation_loss | volatility_exit | adx_loss, "exit_long"] = 1
+        return dataframe

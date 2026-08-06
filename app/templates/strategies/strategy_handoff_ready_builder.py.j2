@@ -1,0 +1,36 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        trend_ok = dataframe["ema_fast"] > dataframe["ema_slow"]
+        rsi_ok = (dataframe["rsi"] >= {{ rsi_min }}) & (dataframe["rsi"] <= {{ rsi_max }})
+        volume_ok = dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}
+        volatility_ok = dataframe["atr_pct"] <= {{ max_entry_atr_pct }}
+{% if handoff_profile == "simple_import" %}
+        entry_condition = trend_ok & rsi_ok
+{% else %}
+        entry_condition = trend_ok & rsi_ok & volume_ok & volatility_ok
+{% endif %}
+        dataframe.loc[entry_condition & dataframe["ema_slow"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        exit_condition = (dataframe["ema_fast"] < dataframe["ema_slow"]) | (dataframe["rsi"] <= {{ rsi_exit_floor }}) | (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        dataframe.loc[exit_condition & dataframe["ema_slow"].notna(), "exit_long"] = 1
+        return dataframe

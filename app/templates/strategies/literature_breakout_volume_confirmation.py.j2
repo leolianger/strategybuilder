@@ -1,0 +1,35 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["channel_high"] = dataframe["high"].rolling({{ breakout_window }}).max().shift(1)
+        dataframe["channel_low"] = dataframe["low"].rolling({{ exit_window }}).min().shift(1)
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        breakout_level = dataframe["channel_high"] * (1 + {{ breakout_buffer_pct }} / 100.0)
+        entry = (
+            (dataframe["close"] > breakout_level) &
+            (dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}) &
+            (dataframe["adx"] >= {{ adx_min }}) &
+            (dataframe["atr_pct"] <= {{ max_atr_pct }})
+        )
+        dataframe.loc[entry & dataframe["channel_high"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        exit_condition = (dataframe["close"] < dataframe["channel_low"]) | (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        dataframe.loc[exit_condition & dataframe["channel_low"].notna(), "exit_long"] = 1
+        return dataframe

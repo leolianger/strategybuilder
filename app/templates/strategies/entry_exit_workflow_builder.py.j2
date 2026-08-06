@@ -1,0 +1,56 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["pullback_ema"] = ta.EMA(dataframe, timeperiod={{ pullback_ema }})
+        dataframe["exit_ema_fast"] = ta.EMA(dataframe, timeperiod={{ exit_ema_fast }})
+        dataframe["exit_ema_slow"] = ta.EMA(dataframe, timeperiod={{ exit_ema_slow }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["channel_high"] = dataframe["high"].rolling({{ breakout_window }}).max().shift(1)
+        dataframe["channel_low"] = dataframe["low"].rolling({{ exit_window }}).min().shift(1)
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+{% if entry_workflow == "breakout_quality" %}
+        primary_entry = dataframe["close"] > dataframe["channel_high"]
+{% elif entry_workflow == "momentum_recovery" %}
+        primary_entry = (dataframe["rsi"] >= {{ rsi_recovery_min }}) & (dataframe["ema_fast"] > dataframe["ema_slow"])
+{% else %}
+        primary_entry = (
+            (dataframe["ema_fast"] > dataframe["ema_slow"]) &
+            (dataframe["close"] >= dataframe["pullback_ema"]) &
+            (dataframe["rsi"] >= {{ rsi_recovery_min }})
+        )
+{% endif %}
+        volume_quality = dataframe["volume"] >= dataframe["volume_ma"] * {{ min_volume_ratio }}
+        volatility_quality = dataframe["atr_pct"] <= {{ max_entry_atr_pct }}
+        not_overheated = dataframe["rsi"] <= {{ rsi_overheat_max }}
+        dataframe.loc[primary_entry & volume_quality & volatility_quality & not_overheated, "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+{% if exit_priority == "fast_protection" %}
+        exit_condition = (dataframe["close"] < dataframe["exit_ema_fast"]) | (dataframe["atr_pct"] > {{ hard_atr_pct }})
+{% elif exit_priority == "let_trend_breathe" %}
+        exit_condition = (dataframe["close"] < dataframe["exit_ema_slow"]) | (dataframe["close"] < dataframe["channel_low"]) | (dataframe["atr_pct"] > {{ hard_atr_pct }})
+{% else %}
+        exit_condition = (
+            (dataframe["close"] < dataframe["exit_ema_fast"]) |
+            (dataframe["close"] < dataframe["channel_low"]) |
+            (dataframe["atr_pct"] > {{ hard_atr_pct }})
+        )
+{% endif %}
+        dataframe.loc[exit_condition & dataframe["ema_slow"].notna(), "exit_long"] = 1
+        return dataframe

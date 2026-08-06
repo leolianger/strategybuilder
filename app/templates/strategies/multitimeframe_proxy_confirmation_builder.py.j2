@@ -1,0 +1,41 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["local_ema_fast"] = ta.EMA(dataframe, timeperiod={{ local_fast_ema }})
+        dataframe["local_ema_slow"] = ta.EMA(dataframe, timeperiod={{ local_slow_ema }})
+        dataframe["proxy_ema"] = ta.EMA(dataframe, timeperiod={{ proxy_trend_ema }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        local_signal = dataframe["local_ema_fast"] > dataframe["local_ema_slow"]
+        proxy_signal = dataframe["close"] > dataframe["proxy_ema"]
+        confirmation_count = proxy_signal.astype(int) + (dataframe["adx"] >= {{ adx_min }}).astype(int) + (dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}).astype(int) + (dataframe["atr_pct"] <= {{ max_entry_atr_pct }}).astype(int)
+{% if proxy_mode == "proxy_required" %}
+        entry_condition = local_signal & proxy_signal & (dataframe["rsi"] <= {{ rsi_entry_max }})
+{% elif proxy_mode == "score_proxy" %}
+        entry_condition = local_signal & (confirmation_count >= {{ min_proxy_score }})
+{% else %}
+        entry_condition = local_signal & ((proxy_signal & (dataframe["rsi"] <= {{ rsi_entry_max }})) | (confirmation_count >= {{ min_proxy_score }}))
+{% endif %}
+        dataframe.loc[entry_condition & dataframe["proxy_ema"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        proxy_break = dataframe["close"] < dataframe["proxy_ema"]
+        local_break = dataframe["local_ema_fast"] < dataframe["local_ema_slow"]
+        exit_condition = local_break | (proxy_break & (dataframe["rsi"] <= {{ rsi_exit_floor }})) | (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        dataframe.loc[exit_condition & dataframe["proxy_ema"].notna(), "exit_long"] = 1
+        return dataframe

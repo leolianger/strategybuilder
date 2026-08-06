@@ -1,0 +1,30 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["trix"] = ta.TRIX(dataframe, timeperiod={{ trix_period }})
+        dataframe["trix_signal"] = dataframe["trix"].rolling({{ signal_period }}).mean()
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cond = (
+            (dataframe["trix"] > dataframe["trix_signal"]) &
+            (dataframe["trix"] > {{ entry_threshold }})
+        )
+        dataframe.loc[cond & dataframe["trix_signal"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        cond = (
+            (dataframe["trix"] < dataframe["trix_signal"]) |
+            (dataframe["trix"] < {{ exit_threshold }})
+        )
+        dataframe.loc[cond & dataframe["trix_signal"].notna(), "exit_long"] = 1
+        return dataframe

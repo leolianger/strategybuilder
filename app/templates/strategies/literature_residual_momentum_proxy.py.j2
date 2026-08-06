@@ -1,0 +1,47 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        if "benchmark_close" in dataframe.columns:
+            dataframe["benchmark_proxy"] = dataframe["benchmark_close"]
+        else:
+            dataframe["benchmark_proxy"] = ta.EMA(dataframe, timeperiod={{ benchmark_proxy_ema }})
+        dataframe["market_component"] = dataframe["benchmark_proxy"].pct_change({{ residual_window }}) * dataframe["close"].shift({{ residual_window }})
+        dataframe["raw_change"] = dataframe["close"] - dataframe["close"].shift({{ residual_window }})
+        dataframe["residual_change"] = dataframe["raw_change"] - dataframe["market_component"]
+        dataframe["residual_score"] = dataframe["residual_change"] / dataframe["close"].shift({{ residual_window }}) * 100.0
+        dataframe["trend_ema"] = ta.EMA(dataframe, timeperiod={{ trend_ema }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        entry = (
+            (dataframe["residual_score"] >= {{ min_residual_score }}) &
+            (dataframe["close"] > dataframe["trend_ema"]) &
+            (dataframe["rsi"] < {{ rsi_ceiling }}) &
+            (dataframe["atr_pct"] <= {{ max_atr_pct }}) &
+            (dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }})
+        )
+        dataframe.loc[entry & dataframe["residual_score"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        exit_condition = (
+            (dataframe["residual_score"] < {{ exit_residual_score }}) |
+            (dataframe["close"] < dataframe["trend_ema"]) |
+            (dataframe["rsi"] > {{ rsi_exit }}) |
+            (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        )
+        dataframe.loc[exit_condition & dataframe["residual_score"].notna(), "exit_long"] = 1
+        return dataframe

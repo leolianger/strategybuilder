@@ -1,0 +1,63 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }}}
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ trend_ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ trend_ema_slow }})
+        dataframe["ema_regime"] = ta.EMA(dataframe, timeperiod={{ regime_ema_window }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ range_rsi_period }})
+        dataframe["atr_pct"] = ta.ATR(dataframe, timeperiod={{ atr_period }}) / dataframe["close"]
+        dataframe["channel_high"] = dataframe["high"].rolling({{ breakout_window }}).max().shift(1)
+        dataframe["channel_low"] = dataframe["low"].rolling({{ breakout_exit_window }}).min().shift(1)
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ breakout_volume_period }}).mean()
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        trend_regime = (dataframe["close"] > dataframe["ema_regime"]) & (dataframe["adx"] > {{ trend_adx_threshold }})
+        range_regime = (dataframe["adx"] < {{ range_adx_max }}) & (dataframe["atr_pct"] < {{ max_atr_pct }} / 100.0)
+        breakout_regime = dataframe["close"] > dataframe["ema_regime"]
+
+        trend_entry = trend_regime & (dataframe["ema_fast"] > dataframe["ema_slow"])
+        range_entry = range_regime & (dataframe["rsi"] < {{ range_rsi_buy }})
+{% if use_volume_confirmation %}
+        breakout_entry = breakout_regime & (dataframe["close"] > dataframe["channel_high"]) & (dataframe["volume"] > dataframe["volume_ma"] * {{ breakout_volume_multiplier }})
+{% else %}
+        breakout_entry = breakout_regime & (dataframe["close"] > dataframe["channel_high"])
+{% endif %}
+
+{% if active_regime == "trend_only" %}
+        entry_cond = trend_entry
+{% elif active_regime == "range_only" %}
+        entry_cond = range_entry
+{% elif active_regime == "breakout_only" %}
+        entry_cond = breakout_entry
+{% else %}
+        entry_cond = trend_entry | range_entry | breakout_entry
+{% endif %}
+        dataframe.loc[entry_cond, "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        trend_exit = dataframe["ema_fast"] < dataframe["ema_slow"]
+        range_exit = dataframe["rsi"] > {{ range_rsi_sell }}
+        breakout_exit = dataframe["close"] < dataframe["channel_low"]
+
+{% if active_regime == "trend_only" %}
+        exit_cond = trend_exit
+{% elif active_regime == "range_only" %}
+        exit_cond = range_exit
+{% elif active_regime == "breakout_only" %}
+        exit_cond = breakout_exit
+{% else %}
+        exit_cond = trend_exit | range_exit | breakout_exit
+{% endif %}
+        dataframe.loc[exit_cond, "exit_long"] = 1
+        return dataframe

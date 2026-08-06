@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 100" role="img" aria-label="literature_lead_lag_calendar_spread_feedback.svg">
+  <rect x="8" y="8" width="144" height="84" rx="20" fill="#ffffff" stroke="#1d4ed8" stroke-width="4"/>
+  <path d="M28 66 C52 30, 70 30, 94 55 S128 74, 140 38" fill="none" stroke="#1d4ed8" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="42" cy="58" r="10" fill="#1d4ed8" opacity="0.18"/>
+  <circle cx="118" cy="52" r="10" fill="#1d4ed8" opacity="0.18"/>
+  <text x="80" y="54" text-anchor="middle" font-family="Inter, Arial" font-size="28" font-weight="800" fill="#1d4ed8">θ</text>
+  <text x="32" y="82" text-anchor="middle" font-family="Inter, Arial" font-size="14" font-weight="700" fill="#334155">F1</text>
+  <text x="128" y="82" text-anchor="middle" font-family="Inter, Arial" font-size="14" font-weight="700" fill="#334155">F2</text>
+</svg>

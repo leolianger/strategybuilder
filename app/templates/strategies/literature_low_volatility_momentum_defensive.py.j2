@@ -1,0 +1,41 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["trend_ema"] = ta.EMA(dataframe, timeperiod={{ trend_ema }})
+        dataframe["momentum_roc"] = ta.ROC(dataframe, timeperiod={{ momentum_window }})
+        returns = dataframe["close"].pct_change()
+        dataframe["realized_vol_pct"] = returns.rolling({{ volatility_window }}).std() * 100.0
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        entry = (
+            (dataframe["close"] > dataframe["trend_ema"]) &
+            (dataframe["momentum_roc"] >= {{ min_momentum_pct }}) &
+            (dataframe["realized_vol_pct"] <= {{ max_realized_vol_pct }}) &
+            (dataframe["atr_pct"] <= {{ max_atr_pct }}) &
+            (dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }})
+        )
+        dataframe.loc[entry & dataframe["trend_ema"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        exit_condition = (
+            (dataframe["close"] < dataframe["trend_ema"]) |
+            (dataframe["momentum_roc"] <= {{ exit_momentum_pct }}) |
+            (dataframe["realized_vol_pct"] >= {{ hard_volatility_pct }}) |
+            (dataframe["atr_pct"] >= {{ hard_atr_pct }})
+        )
+        dataframe.loc[exit_condition & dataframe["trend_ema"].notna(), "exit_long"] = 1
+        return dataframe

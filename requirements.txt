@@ -1,0 +1,10 @@
+# Local-development compatibility set for Strategy Builder v1.2.20.
+# The Olares package uses the FastAPI/Jinja2/Pydantic/Uvicorn versions in the
+# runtime image. python-multipart and pypdf are bundled with the app source for
+# offline startup and PDF paper extraction.
+fastapi==0.128.2
+uvicorn[standard]==0.48.0
+jinja2==3.1.6
+pydantic==2.13.4
+python-multipart==0.0.29
+pypdf==5.9.0

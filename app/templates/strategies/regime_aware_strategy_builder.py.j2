@@ -1,0 +1,78 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["trend_fast"] = ta.EMA(dataframe, timeperiod={{ trend_fast_window }})
+        dataframe["trend_slow"] = ta.EMA(dataframe, timeperiod={{ trend_slow_window }})
+        dataframe["regime_ema"] = ta.EMA(dataframe, timeperiod={{ regime_ema_window }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        bb = ta.BBANDS(dataframe, timeperiod={{ bb_period }}, nbdevup={{ bb_stddev }}, nbdevdn={{ bb_stddev }})
+        dataframe["bb_upper"] = bb["upperband"]
+        dataframe["bb_middle"] = bb["middleband"]
+        dataframe["bb_lower"] = bb["lowerband"]
+        dataframe["bb_width_pct"] = (dataframe["bb_upper"] - dataframe["bb_lower"]) / dataframe["bb_middle"] * 100.0
+        dataframe["channel_high"] = dataframe["high"].rolling({{ breakout_window }}).max().shift(1)
+        dataframe["channel_low"] = dataframe["low"].rolling({{ exit_window }}).min().shift(1)
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        trend_regime = (dataframe["close"] > dataframe["regime_ema"]) & (dataframe["adx"] >= {{ trend_adx_threshold }})
+        range_regime = (dataframe["adx"] <= {{ range_adx_max }}) & (dataframe["bb_width_pct"] <= {{ range_bandwidth_max }})
+        breakout_regime = (dataframe["close"] > dataframe["channel_high"]) & (dataframe["volume"] > dataframe["volume_ma"] * {{ volume_multiplier }})
+        high_vol_regime = dataframe["atr_pct"] >= {{ high_vol_atr_pct }}
+        low_vol_regime = dataframe["atr_pct"] <= {{ low_vol_atr_pct }}
+
+        trend_entry = trend_regime & (dataframe["trend_fast"] > dataframe["trend_slow"]) & (dataframe["rsi"] >= {{ trend_rsi_min }})
+        range_entry = range_regime & (dataframe["rsi"] <= {{ range_rsi_buy }})
+        breakout_entry = breakout_regime
+        high_vol_entry = high_vol_regime & (dataframe["close"] > dataframe["regime_ema"]) & (dataframe["volume"] > dataframe["volume_ma"] * {{ high_vol_volume_mult }})
+        low_vol_entry = low_vol_regime & (dataframe["close"] > dataframe["bb_upper"])
+
+{% if regime_mode == "trend" %}
+        entry_condition = trend_entry
+{% elif regime_mode == "range" %}
+        entry_condition = range_entry
+{% elif regime_mode == "breakout" %}
+        entry_condition = breakout_entry
+{% elif regime_mode == "high_volatility" %}
+        entry_condition = high_vol_entry
+{% elif regime_mode == "low_volatility" %}
+        entry_condition = low_vol_entry
+{% else %}
+        entry_condition = trend_entry | range_entry | breakout_entry | high_vol_entry | low_vol_entry
+{% endif %}
+        dataframe.loc[entry_condition, "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        trend_exit = dataframe["trend_fast"] < dataframe["trend_slow"]
+        range_exit = dataframe["rsi"] >= {{ range_rsi_sell }}
+        breakout_exit = dataframe["close"] < dataframe["channel_low"]
+        high_vol_exit = dataframe["atr_pct"] > {{ hard_atr_pct }}
+        low_vol_exit = dataframe["close"] < dataframe["bb_middle"]
+{% if regime_mode == "trend" %}
+        exit_condition = trend_exit | high_vol_exit
+{% elif regime_mode == "range" %}
+        exit_condition = range_exit | high_vol_exit
+{% elif regime_mode == "breakout" %}
+        exit_condition = breakout_exit | trend_exit
+{% elif regime_mode == "high_volatility" %}
+        exit_condition = high_vol_exit | trend_exit
+{% elif regime_mode == "low_volatility" %}
+        exit_condition = low_vol_exit | breakout_exit
+{% else %}
+        exit_condition = trend_exit | range_exit | breakout_exit | high_vol_exit | low_vol_exit
+{% endif %}
+        dataframe.loc[exit_condition, "exit_long"] = 1
+        return dataframe

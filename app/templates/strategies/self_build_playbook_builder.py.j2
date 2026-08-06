@@ -1,0 +1,58 @@
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+import talib.abstract as ta
+
+class {{ strategy_name }}(IStrategy):
+    timeframe = "{{ timeframe }}"
+    minimal_roi = {"0": {{ minimal_roi }} }
+    stoploss = {{ stoploss }}
+{{ common_class_block|indent(4, true) }}
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe["ema_fast"] = ta.EMA(dataframe, timeperiod={{ ema_fast }})
+        dataframe["ema_slow"] = ta.EMA(dataframe, timeperiod={{ ema_slow }})
+        dataframe["macro_ema"] = ta.EMA(dataframe, timeperiod={{ macro_ema }})
+        dataframe["exit_ema"] = ta.EMA(dataframe, timeperiod={{ exit_ema }})
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod={{ rsi_period }})
+        dataframe["adx"] = ta.ADX(dataframe, timeperiod={{ adx_period }})
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod={{ atr_period }})
+        dataframe["atr_pct"] = dataframe["atr"] / dataframe["close"] * 100.0
+        dataframe["volume_ma"] = dataframe["volume"].rolling({{ volume_period }}).mean()
+        dataframe["channel_high"] = dataframe["high"].rolling({{ breakout_window }}).max().shift(1)
+        dataframe["channel_low"] = dataframe["low"].rolling({{ exit_window }}).min().shift(1)
+        return dataframe
+
+    def _entry_score(self, dataframe: DataFrame):
+        score = 0
+        score = score + ((dataframe["ema_fast"] > dataframe["ema_slow"]).astype(int) * {{ trend_weight }})
+        score = score + (((dataframe["rsi"] >= {{ rsi_recovery_min }}) & (dataframe["rsi"] <= {{ rsi_overheat_max }})).astype(int) * {{ momentum_weight }})
+        score = score + ((dataframe["adx"] >= {{ adx_min }}).astype(int) * {{ strength_weight }})
+        score = score + ((dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }}).astype(int) * {{ volume_weight }})
+        score = score + ((dataframe["atr_pct"] <= {{ max_atr_pct }}).astype(int) * {{ volatility_weight }})
+        score = score + ((dataframe["close"] > dataframe["channel_high"]).astype(int) * {{ breakout_weight }})
+        return score
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+{% if playbook_mode == "starter" %}
+        entry_condition = (dataframe["ema_fast"] > dataframe["ema_slow"]) & (dataframe["rsi"] >= {{ rsi_recovery_min }})
+{% elif playbook_mode == "quality_first" %}
+        entry_condition = (self._entry_score(dataframe) >= {{ min_entry_score }}) & (dataframe["atr_pct"] <= {{ max_atr_pct }}) & (dataframe["volume"] >= dataframe["volume_ma"] * {{ volume_multiplier }})
+{% elif playbook_mode == "breakout_first" %}
+        entry_condition = (dataframe["close"] > dataframe["channel_high"]) & (self._entry_score(dataframe) >= {{ min_entry_score }})
+{% else %}
+        entry_condition = self._entry_score(dataframe) >= {{ min_entry_score }}
+{% endif %}
+        dataframe.loc[entry_condition & dataframe["ema_slow"].notna(), "enter_long"] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        score = self._entry_score(dataframe)
+{% if exit_playbook == "simple" %}
+        exit_condition = dataframe["close"] < dataframe["exit_ema"]
+{% elif exit_playbook == "risk_first" %}
+        exit_condition = (dataframe["close"] < dataframe["exit_ema"]) | (dataframe["atr_pct"] > {{ hard_atr_pct }})
+{% else %}
+        exit_condition = (score <= {{ exit_score }}) | (dataframe["close"] < dataframe["channel_low"]) | (dataframe["atr_pct"] > {{ hard_atr_pct }})
+{% endif %}
+        dataframe.loc[exit_condition & dataframe["ema_slow"].notna(), "exit_long"] = 1
+        return dataframe
